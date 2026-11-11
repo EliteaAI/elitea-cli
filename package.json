@@ -18,9 +18,6 @@
   "bugs": {
     "url": "https://github.com/EliteaAI/elitea-cli/issues"
   },
-  "directories": {
-    "doc": "docs"
-  },
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",

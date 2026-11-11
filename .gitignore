@@ -9,5 +9,5 @@ coverage/
 # local-only notes and settings
 .claude/
 CLAUDE.md
-docs/HANDOVER.md
+docs/
 local_features/
