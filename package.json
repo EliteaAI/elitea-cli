@@ -1,0 +1,66 @@
+{
+  "name": "elitea-cli",
+  "version": "0.1.0",
+  "description": "Launch Claude Code, Codex and desktop AI apps on top of EliteA",
+  "keywords": [
+    "elitea",
+    "cli",
+    "claude-code",
+    "codex",
+    "llm",
+    "ai-agents"
+  ],
+  "homepage": "https://github.com/EliteaAI/elitea-cli#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/EliteaAI/elitea-cli.git"
+  },
+  "bugs": {
+    "url": "https://github.com/EliteaAI/elitea-cli/issues"
+  },
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "elitea-cli": "ELITEA_CLI_HOME=/tmp/elitea-cli-home ELITEA_CLI_NO_KEYCHAIN=1 node dist/cli.js",
+    "elitea-cli:login": "tsup --silent && npm run -s elitea-cli -- login",
+    "elitea-cli:logout": "npm run -s elitea-cli -- logout",
+    "elitea-cli:status": "tsup --silent && npm run -s elitea-cli -- status",
+    "elitea-cli:projects": "tsup --silent && npm run -s elitea-cli -- projects",
+    "elitea-cli:models": "tsup --silent && npm run -s elitea-cli -- models",
+    "elitea-cli:agents": "tsup --silent && npm run -s elitea-cli -- agents",
+    "elitea-cli:agent-chat": "tsup --silent && npm run -s elitea-cli -- agents chat",
+    "elitea-cli:claude": "tsup --silent && npm run -s elitea-cli -- launch claude",
+    "elitea-cli:codex": "tsup --silent && npm run -s elitea-cli -- launch codex",
+    "elitea-cli:reset": "rm -rf /tmp/elitea-cli-home"
+  },
+  "license": "Apache-2.0",
+  "type": "module",
+  "dependencies": {
+    "@inquirer/prompts": "^8.7.2",
+    "@napi-rs/keyring": "^2.1.0",
+    "commander": "^15.0.0",
+    "open": "^11.0.4",
+    "smol-toml": "^1.9.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.3",
+    "tsup": "^8.5.1",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.2"
+  },
+  "bin": {
+    "elitea-cli": "dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=20"
+  }
+}
