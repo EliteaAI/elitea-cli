@@ -4,7 +4,7 @@ Run Claude Code, Codex and other coding agents on top of [EliteA](https://next.e
 like `ollama launch`, but the models come from your EliteA project.
 
 ```sh
-npm install -g elitea-cli
+npm install -g @eliteaai/elitea-cli
 
 elitea-cli login            # paste a personal access token, pick a project
 elitea-cli launch claude    # Claude Code

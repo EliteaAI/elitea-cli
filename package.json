@@ -1,5 +1,5 @@
 {
-  "name": "elitea-cli",
+  "name": "@eliteaai/elitea-cli",
   "version": "0.1.0",
   "description": "Launch Claude Code, Codex and desktop AI apps on top of EliteA",
   "keywords": [
