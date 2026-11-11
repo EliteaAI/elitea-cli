@@ -37,6 +37,7 @@
     "elitea-cli:reset": "rm -rf /tmp/elitea-cli-home"
   },
   "license": "Apache-2.0",
+  "author": "EliteA",
   "type": "module",
   "dependencies": {
     "@inquirer/prompts": "^8.7.2",
@@ -47,7 +48,7 @@
   },
   "devDependencies": {
     "@types/node": "^26.6.3",
-    "tsup": "^8.5.1",
+    "tsup": "^9.0.0",
     "typescript": "^7.0.2",
     "vitest": "^5.0.2"
   },
