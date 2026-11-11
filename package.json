@@ -34,7 +34,8 @@
     "elitea-cli:agent-chat": "tsup --silent && npm run -s elitea-cli -- agents chat",
     "elitea-cli:claude": "tsup --silent && npm run -s elitea-cli -- launch claude",
     "elitea-cli:codex": "tsup --silent && npm run -s elitea-cli -- launch codex",
-    "elitea-cli:reset": "rm -rf /tmp/elitea-cli-home"
+    "elitea-cli:reset": "rm -rf /tmp/elitea-cli-home",
+    "prepublishOnly": "npm test && npm run typecheck && npm run build"
   },
   "license": "Apache-2.0",
   "author": "EliteA",
@@ -60,5 +61,8 @@
   ],
   "engines": {
     "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }
