@@ -23,7 +23,7 @@ describe("registry", () => {
   it("finds integrations by name and alias", () => {
     expect(findIntegration("claude")?.name).toBe("claude");
     expect(findIntegration("Claude-Code")?.name).toBe("claude");
-    expect(findIntegration("codex")?.name).toBe("codex");
+    expect(findIntegration("codex")).toBeUndefined();
     expect(findIntegration("vim")).toBeUndefined();
   });
 });

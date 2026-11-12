@@ -89,7 +89,7 @@ export async function loginCommand(opts: LoginOptions): Promise<void> {
 
   console.log(`Project: ${projectLabel(project, user)}`);
   console.log(`Token saved to ${where === "keychain" ? "the OS keychain" : join(eliteaCliHome(), "credentials.json")}`);
-  console.log("\nNext: `elitea-cli launch claude` or `elitea-cli launch codex`");
+  console.log("\nNext: `elitea-cli launch claude`");
 }
 
 export async function logoutCommand(): Promise<void> {

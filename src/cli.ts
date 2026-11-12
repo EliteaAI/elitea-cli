@@ -9,7 +9,7 @@ import { statusCommand } from "./commands/status.js";
 
 const program = new Command()
   .name("elitea-cli")
-  .description("Launch Claude Code, Codex and other agents on top of EliteA")
+  .description("Launch Claude Code on top of EliteA and work with EliteA projects and agents")
   .version("0.1.0")
   // `agents` and `agents chat` share --json/--project; without this the parent swallows them.
   .enablePositionalOptions();
@@ -64,7 +64,7 @@ agents
 
 program
   .command("launch")
-  .argument("[integration]", "claude | codex")
+  .argument("[integration]", "claude")
   .argument("[args...]", "arguments for the agent, after --")
   .description("Launch an agent wired to EliteA")
   .option("-m, --model <name>", "model to use (saved for next time)")

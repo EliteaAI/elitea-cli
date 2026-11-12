@@ -1,12 +1,11 @@
 {
   "name": "@eliteaai/elitea-cli",
   "version": "0.1.0",
-  "description": "Launch Claude Code, Codex and desktop AI apps on top of EliteA",
+  "description": "Launch Claude Code on top of EliteA and work with EliteA projects and agents from the terminal",
   "keywords": [
     "elitea",
     "cli",
     "claude-code",
-    "codex",
     "llm",
     "ai-agents"
   ],
@@ -33,7 +32,6 @@
     "elitea-cli:agents": "tsup --silent && npm run -s elitea-cli -- agents",
     "elitea-cli:agent-chat": "tsup --silent && npm run -s elitea-cli -- agents chat",
     "elitea-cli:claude": "tsup --silent && npm run -s elitea-cli -- launch claude",
-    "elitea-cli:codex": "tsup --silent && npm run -s elitea-cli -- launch codex",
     "elitea-cli:reset": "rm -rf /tmp/elitea-cli-home",
     "prepublishOnly": "npm test && npm run typecheck && npm run build"
   },
