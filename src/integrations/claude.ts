@@ -51,6 +51,8 @@ export const claude: Integration = {
       settings.permissions = ELITEA_PERMISSIONS;
       args.push("--append-system-prompt", sessionContext(ctx), "--plugin-dir", ctx.tools.pluginDir);
       env.PATH = [ctx.tools.shimDir, process.env.PATH].filter(Boolean).join(delimiter);
+      // The shim reads the token from the store itself; it only needs to know which environment.
+      if (ctx.environment) env.ELITEA_CLI_ENV = ctx.environment;
     }
     return { args: [...args, "--settings", JSON.stringify(settings), ...ctx.extraArgs], env };
   },

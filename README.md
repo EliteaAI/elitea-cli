@@ -6,7 +6,7 @@ like `ollama launch`, but the models come from your EliteA project.
 ```sh
 npm install -g @eliteaai/elitea-cli
 
-elitea-cli login            # paste a personal access token, pick a project
+elitea-cli login            # enter your EliteA server URL, paste a personal access token, pick a project
 elitea-cli launch claude    # Claude Code
 ```
 
@@ -14,9 +14,10 @@ elitea-cli launch claude    # Claude Code
 
 | Command | |
 |---|---|
-| `elitea-cli login [--project <id\|name>] [--url <url>] [--token-stdin]` | Log in with an EliteA personal access token and pick a project |
-| `elitea-cli logout` | Forget the stored token |
-| `elitea-cli status` | Show server, user, project and saved model choices |
+| `elitea-cli login [--url <url>] [--env <name>] [--project <id\|name>] [--token-stdin] [--allow-http]` | Log in to an EliteA server with a personal access token and pick a project |
+| `elitea-cli logout [--env <name>] [--all]` | Forget the stored token (the environment stays) |
+| `elitea-cli status [-o json]` | Show environment, server, user, project and saved model choices |
+| `elitea-cli env list [-o json]` / `env add <name> --url <url>` / `env use <name>` / `env remove <name> [--yes]` | Manage saved environments (servers) |
 | `elitea-cli projects` / `elitea-cli project [id\|name]` | List projects / switch the active project |
 | `elitea-cli models` | Models available in the active project |
 | `elitea-cli agents [--search text] [--project id\|name] [--json]` | EliteA agents in the active project (pipelines are not included) |
@@ -26,6 +27,26 @@ elitea-cli launch claude    # Claude Code
 The model you choose is remembered per agent; `--pick` chooses again. Everything after `--` goes
 to the agent unchanged, e.g. `elitea-cli launch claude -- -p "explain this repo"`.
 `--print` shows the environment and command instead of running it (token redacted).
+
+## Environments
+
+Each EliteA server you log in to is saved as a named **environment** with its own user, active
+project, model choices and token. There is no default server: the first `login` asks for the URL
+and a name (default: the host, e.g. `dev.example.com`, `localhost-8080`).
+
+```sh
+elitea-cli login                       # pick a saved environment or add a new one
+elitea-cli env list                    # * marks the active one
+elitea-cli env use dev                 # switch
+elitea-cli --env prod agents           # one command against another environment
+```
+
+The environment is chosen by `--env` > `ELITEA_CLI_ENV` > `ELITEA_CLI_URL` > the active one. There is
+one environment per server (`host[:port]`), and a token stored for one server is never sent to another.
+Plain `http://` servers other than localhost need a confirmation (or `--allow-http` in scripts).
+The 0.1.0 config is converted on first run; the old file is kept as `~/.elitea-cli/config.v1.json`.
+
+In CI, no saved config is needed: `ELITEA_CLI_URL=https://<your-server> ELITEA_CLI_TOKEN=… elitea-cli agents`.
 
 ## How it works
 
@@ -63,15 +84,17 @@ What `launch` adds to the `claude` command line (nothing is written into `~/.cla
   `agents chat` always asks, because it runs a remote agent, spends budget and the agent may
   have write tools;
 - `PATH`: `~/.elitea-cli/bin/elitea-cli`, a shim that runs the same elitea-cli build. The token is
-  not passed; the shim reads it from the store.
+  not passed; the shim reads it from the store. `ELITEA_CLI_ENV` names the launch's environment,
+  so Claude's calls go to the same server.
 
 ## Environment
 
 | Variable | |
 |---|---|
-| `ELITEA_CLI_TOKEN` | Use this token instead of the stored one (CI) |
-| `ELITEA_CLI_PROJECT` | Override the active project id |
-| `ELITEA_CLI_URL` | Override the EliteA server URL |
+| `ELITEA_CLI_ENV` | Use this saved environment (like `--env`) |
+| `ELITEA_CLI_URL` | Use the environment of this server, or a temporary unsaved one (CI) |
+| `ELITEA_CLI_TOKEN` | Use this token for the selected environment instead of the stored one (CI) |
+| `ELITEA_CLI_PROJECT` | Override the project id of the selected environment |
 | `ELITEA_CLI_HOME` | Config directory (default `~/.elitea-cli`) |
 | `ELITEA_CLI_NO_KEYCHAIN` | Store the token in a file instead of the keychain |
 

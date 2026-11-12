@@ -1,6 +1,6 @@
 import { fileURLToPath } from "node:url";
 import { select } from "@inquirer/prompts";
-import { saveConfig } from "../config.js";
+import { updateEnvironment } from "../config.js";
 import type { EliteaModel, ModelCatalog } from "../elitea.js";
 import { claude } from "../integrations/claude.js";
 import { writeClaudeTools } from "../integrations/claudePlugin.js";
@@ -97,19 +97,19 @@ export async function launchCommand(name: string | undefined, extraArgs: string[
 
   const session = await requireSession();
   const catalog = await session.client.getModels(session.projectId);
-  const saved = session.config.integrations[integration.name] ?? {};
+  const saved = session.env.integrations[integration.name] ?? {};
   const { model, fastModel, changed } = await resolveModels(integration, catalog, saved, opts);
-  if (changed) {
-    await saveConfig({
-      ...session.config,
+  if (changed && !session.temporary) {
+    await updateEnvironment(session.name, (env) => ({
+      ...env,
       integrations: {
-        ...session.config.integrations,
+        ...env.integrations,
         [integration.name]: { model: model.name, ...(integration.usesFastModel ? { fastModel: fastModel.name } : {}) },
       },
-    });
+    }));
   }
 
-  const project = session.config.project;
+  const project = session.env.project;
   const spec = await integration.prepare({
     bin,
     url: session.url,
@@ -119,12 +119,14 @@ export async function launchCommand(name: string | undefined, extraArgs: string[
     model,
     fastModel,
     extraArgs,
-    userName: session.config.user?.name,
+    environment: session.temporary ? undefined : session.name,
+    userName: session.env.user?.name,
     projectName: project?.id === session.projectId ? project.name : undefined,
     tools: integration.name === claude.name ? await writeClaudeTools({ cliPath: fileURLToPath(import.meta.url) }) : undefined,
   });
 
   if (opts.print) {
+    console.log(`# environment: ${session.temporary ? `${session.url} (ELITEA_CLI_URL, not saved)` : session.name}`);
     for (const [k, v] of Object.entries(spec.env)) {
       if (v === undefined) console.log(`unset ${k}`);
       else console.log(`export ${k}=${shellQuote(v === session.token ? redact(v) : v)}`);
@@ -134,6 +136,6 @@ export async function launchCommand(name: string | undefined, extraArgs: string[
   }
 
   const fast = integration.usesFastModel && fastModel.name !== model.name ? `, fast: ${fastModel.display_name}` : "";
-  console.error(`Launching ${integration.displayName} with ${model.display_name}${fast} (project ${session.projectId})`);
+  console.error(`Launching ${integration.displayName} with ${model.display_name}${fast} (environment ${session.name}, project ${session.projectId})`);
   return runForeground(bin, spec.args, mergeEnv(process.env, spec.env));
 }

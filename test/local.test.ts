@@ -16,10 +16,14 @@ beforeEach(async () => {
 });
 
 describe("config", () => {
-  it("returns defaults when nothing is saved and round-trips", async () => {
-    expect(await loadConfig()).toEqual({ url: "https://next.elitea.ai", integrations: {} });
-    await saveConfig({ url: "https://x.test", project: { id: 4, name: "p" }, integrations: { claude: { model: "m" } } });
-    expect((await loadConfig()).project).toEqual({ id: 4, name: "p" });
+  it("has no environment and no server when nothing is saved, and round-trips", async () => {
+    expect(await loadConfig()).toEqual({ environments: {}, settings: {} });
+    await saveConfig({
+      active: "x",
+      environments: { x: { url: "https://x.test", project: { id: 4, name: "p" }, integrations: { claude: { model: "m" } } } },
+      settings: {},
+    });
+    expect((await loadConfig()).environments.x?.project).toEqual({ id: 4, name: "p" });
     expect((await stat(join(home, "config.json"))).mode & 0o777).toBe(0o600);
   });
 });
