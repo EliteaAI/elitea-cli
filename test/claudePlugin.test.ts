@@ -70,8 +70,8 @@ describe("sessionContext", () => {
       [
         "You are running inside elitea-cli, connected to EliteA (https://next.elitea.ai).",
         "User: Jo Doe. Active EliteA project: Personal (id 12321).",
-        "The user's EliteA agents and pipelines live in this project and run on the EliteA server.",
-        "Use the `elitea` skill (the `elitea-cli` command) for anything about EliteA projects, agents or pipelines, or running them.",
+        "The user's EliteA agents live in this project and run on the EliteA server.",
+        "Use the `elitea` skill (the `elitea-cli` command) for anything about EliteA projects or agents, or running them.",
       ].join("\n"),
     );
   });

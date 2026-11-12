@@ -4,8 +4,8 @@ import { EliteaClient } from "../src/elitea.js";
 
 const base = "/api/v2/elitea_core/applications/prompt_lib/4";
 
-function agent(id: number, name: string, description = "") {
-  return { id, name, description, status: "draft", agent_type: "openai" };
+function agent(id: number, name: string, description = "", agentType = "openai") {
+  return { id, name, description, status: "draft", agent_type: agentType };
 }
 
 function pagedFetch(all: ReturnType<typeof agent>[]) {
@@ -15,7 +15,10 @@ function pagedFetch(all: ReturnType<typeof agent>[]) {
     const limit = Number(u.searchParams.get("limit"));
     const offset = Number(u.searchParams.get("offset"));
     const q = u.searchParams.get("query");
-    const matching = q ? all.filter((a) => a.name.toLowerCase().includes(q.toLowerCase())) : all;
+    const type = u.searchParams.get("agents_type");
+    const matching = all
+      .filter((a) => (type === "classic" ? a.agent_type !== "pipeline" : type === "pipeline" ? a.agent_type === "pipeline" : true))
+      .filter((a) => !q || a.name.toLowerCase().includes(q.toLowerCase()));
     return Response.json({ total: matching.length, rows: matching.slice(offset, offset + limit) });
   }) as unknown as typeof fetch & ReturnType<typeof vi.fn>;
 }
@@ -33,6 +36,16 @@ describe("listAgents", () => {
   it("passes the search text as query", async () => {
     const client = new EliteaClient("https://elitea.test", "tok", pagedFetch(all));
     expect((await client.listAgents(4, { query: "attach" })).map((a) => a.name)).toEqual(["Attach 2", "Attach"]);
+  });
+
+  it("lists classic agents only by default; pipelines on request", async () => {
+    const mixed = [...all, agent(9, "Nightly", "", "pipeline")];
+    const fetchImpl = pagedFetch(mixed);
+    const client = new EliteaClient("https://elitea.test", "tok", fetchImpl);
+    expect((await client.listAgents(4)).map((a) => a.id)).toEqual([5, 4, 3, 2, 1]);
+    expect(new URL(String(fetchImpl.mock.calls[0]![0])).searchParams.get("agents_type")).toBe("classic");
+    expect((await client.listAgents(4, { type: "pipeline" })).map((a) => a.id)).toEqual([9]);
+    expect(await client.listAgents(4, { type: "all" })).toHaveLength(6);
   });
 
   it("stops on an empty page even if total says otherwise", async () => {
