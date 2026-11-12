@@ -44,7 +44,7 @@ program.command("models").description("List models available in the active proje
 
 const agents = program
   .command("agents")
-  .description("List EliteA agents in the active project")
+  .description("List EliteA agents in the active project (pipelines are not included)")
   .option("--json")
   .option("-s, --search <text>", "only agents whose name matches")
   .option("-p, --project <id|name>", "use this project instead of the active one")

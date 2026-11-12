@@ -28,6 +28,9 @@ export interface ModelCatalog {
   high_tier_default_model_name?: string | null;
 }
 
+/** Which applications to list: classic agents, pipelines, or both. */
+export type ApplicationType = "agent" | "pipeline" | "all";
+
 /** An EliteA agent ("application" in the API); list rows carry no versions. */
 export interface EliteaAgent {
   id: number;
@@ -153,13 +156,22 @@ export class EliteaClient {
     return this.get<ModelCatalog>(`/api/v2/configurations/models/${projectId}?include_shared=true`);
   }
 
-  /** All agents in the project, newest first; `query` filters by name on the server. */
-  async listAgents(projectId: number, opts: { query?: string; pageSize?: number } = {}): Promise<EliteaAgent[]> {
+  /**
+   * Agents in the project, newest first; `query` filters by name on the server. Pipelines are
+   * applications too and share this endpoint: `type` "agent" (the default) leaves them out,
+   * "pipeline" returns only them, "all" both.
+   */
+  async listAgents(
+    projectId: number,
+    opts: { query?: string; pageSize?: number; type?: ApplicationType } = {},
+  ): Promise<EliteaAgent[]> {
     const limit = opts.pageSize ?? 100;
+    const type = opts.type ?? "agent";
     const agents: EliteaAgent[] = [];
     for (;;) {
       const params = new URLSearchParams({ limit: String(limit), offset: String(agents.length) });
       if (opts.query) params.set("query", opts.query);
+      if (type !== "all") params.set("agents_type", type === "agent" ? "classic" : "pipeline");
       const page = await this.get<{ total: number; rows: EliteaAgent[] }>(
         `/api/v2/elitea_core/applications/prompt_lib/${projectId}?${params}`,
       );

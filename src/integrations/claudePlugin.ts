@@ -32,14 +32,14 @@ const SKILL = `---
 name: elitea
 description: >-
   Use for anything about EliteA: the current EliteA project, user or server; listing EliteA
-  projects, agents or pipelines; and running an EliteA agent or pipeline and using its answer.
-  Triggers: "which project are we in", "what agents do we have", "list pipelines",
-  "ask the … agent", "let the … agent do …", "run the … pipeline", "EliteA", "my project".
+  projects or agents; and running an EliteA agent and using its answer.
+  Triggers: "which project are we in", "what agents do we have", "ask the … agent",
+  "let the … agent do …", "EliteA", "my project".
 ---
 
 # EliteA via elitea-cli
 
-EliteA agents and pipelines run **on the EliteA server**, not here. You reach them with the
+EliteA agents run **on the EliteA server**, not here. You reach them with the
 \`elitea-cli\` command in Bash. The user is already logged in; the session context above names the
 active project.
 
@@ -50,12 +50,11 @@ active project.
 - \`elitea-cli status\` shows the server, user and active project.
 - \`elitea-cli projects --json\` lists the user's projects: \`[{id, name, …}]\`.
 
-## Agents and pipelines
+## Agents
 
 \`elitea-cli agents --json [--search <text>] [--project <id|name>]\` →
-\`[{id, name, description, status, agent_type, tags}]\`. Pipelines are the rows with
-\`agent_type: "pipeline"\`; any other \`agent_type\` (e.g. \`"openai"\`) is a regular agent. Both run
-the same way.
+\`[{id, name, description, status, agent_type, tags}]\`. EliteA pipelines are not listed and
+can't be run from here yet; if the user asks for one, say so.
 
 When the user's request doesn't name an agent exactly, list the agents and pick by name and
 description. Ask the user when two agents fit equally well.
@@ -100,14 +99,14 @@ take from a few seconds to several minutes; use a Bash timeout of 600000 ms.
 
 const COMMANDS: Record<string, string> = {
   "agents.md": `---
-description: List EliteA agents and pipelines in the active project
+description: List EliteA agents in the active project
 argument-hint: "[search text] [--project <id|name>]"
 ---
-List the EliteA agents and pipelines. Arguments: $ARGUMENTS
+List the EliteA agents. Arguments: $ARGUMENTS
 
 Run \`elitea-cli agents --json\`. If the arguments contain search text, add \`--search "<text>"\`;
 if they name a project, add \`--project <id|name>\`.
-Show a compact table: id, name, kind (pipeline if \`agent_type\` is "pipeline", else agent), a one-line description.
+Show a compact table: id, name, a one-line description.
 `,
   "projects.md": `---
 description: List your EliteA projects and show the active one
@@ -167,8 +166,8 @@ export function sessionContext(opts: { url: string; projectId: number; projectNa
   return [
     `You are running inside elitea-cli, connected to EliteA (${opts.url}).`,
     `${opts.userName ? `User: ${opts.userName}. ` : ""}Active EliteA project: ${project}.`,
-    "The user's EliteA agents and pipelines live in this project and run on the EliteA server.",
-    "Use the `elitea` skill (the `elitea-cli` command) for anything about EliteA projects, agents or pipelines, or running them.",
+    "The user's EliteA agents live in this project and run on the EliteA server.",
+    "Use the `elitea` skill (the `elitea-cli` command) for anything about EliteA projects or agents, or running them.",
   ].join("\n");
 }
 

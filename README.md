@@ -19,7 +19,7 @@ elitea-cli launch claude    # Claude Code
 | `elitea-cli status` | Show server, user, project and saved model choices |
 | `elitea-cli projects` / `elitea-cli project [id\|name]` | List projects / switch the active project |
 | `elitea-cli models` | Models available in the active project |
-| `elitea-cli agents [--search text] [--project id\|name] [--json]` | EliteA agents in the active project |
+| `elitea-cli agents [--search text] [--project id\|name] [--json]` | EliteA agents in the active project (pipelines are not included) |
 | `elitea-cli agents chat [agent] [message] [-c conversation] [--agent-version name] [--json]` | Chat with an agent: interactive without a message, one answer with one |
 | `elitea-cli launch claude [-m model] [--fast-model model] [--pick] [--print] [-- agent args]` | Start an agent wired to EliteA |
 
@@ -38,7 +38,7 @@ The token is stored in the OS keychain (falls back to `~/.elitea-cli/credentials
 ## EliteA agents inside Claude Code
 
 In any folder, `elitea-cli launch claude` starts Claude Code that knows your EliteA user and
-project and can run your EliteA agents and pipelines:
+project and can run your EliteA agents:
 
 ```
 > what agents do we have?
@@ -52,7 +52,7 @@ sees only the message Claude sends it (Claude includes the code it needs), not y
 
 | Slash command | |
 |---|---|
-| `/elitea:agents [search] [--project …]` | Agents and pipelines in the project |
+| `/elitea:agents [search] [--project …]` | Agents in the project |
 | `/elitea:projects` | Your projects, the active one marked |
 | `/elitea:chat <agent> <message>` | Send a message to an agent and show its answer |
 
