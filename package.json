@@ -1,7 +1,7 @@
 {
   "name": "@eliteaai/elitea-cli",
   "version": "0.1.0",
-  "description": "Launch Claude Code on top of EliteA and work with EliteA projects and agents from the terminal",
+  "description": "Launch Claude Code on top of EliteA and work with EliteA projects, agents and pipelines from the terminal",
   "keywords": [
     "elitea",
     "cli",
@@ -30,6 +30,13 @@
     "elitea-cli:projects": "tsup --silent && npm run -s elitea-cli -- projects",
     "elitea-cli:models": "tsup --silent && npm run -s elitea-cli -- models",
     "elitea-cli:agents": "tsup --silent && npm run -s elitea-cli -- agents",
+    "elitea-cli:agent-get": "tsup --silent && npm run -s elitea-cli -- agents get",
+    "elitea-cli:agent-versions": "tsup --silent && npm run -s elitea-cli -- agents versions",
+    "elitea-cli:agent-run": "tsup --silent && npm run -s elitea-cli -- agents run",
+    "elitea-cli:pipelines": "tsup --silent && npm run -s elitea-cli -- pipelines list",
+    "elitea-cli:pipeline-get": "tsup --silent && npm run -s elitea-cli -- pipelines get",
+    "elitea-cli:pipeline-versions": "tsup --silent && npm run -s elitea-cli -- pipelines versions",
+    "elitea-cli:pipeline-run": "tsup --silent && npm run -s elitea-cli -- pipelines run",
     "elitea-cli:agent-chat": "tsup --silent && npm run -s elitea-cli -- agents chat",
     "elitea-cli:claude": "tsup --silent && npm run -s elitea-cli -- launch claude",
     "elitea-cli:reset": "rm -rf /tmp/elitea-cli-home",
@@ -43,7 +50,8 @@
     "@napi-rs/keyring": "^2.1.0",
     "commander": "^15.0.0",
     "open": "^11.0.4",
-    "smol-toml": "^1.9.0"
+    "smol-toml": "^1.9.0",
+    "yaml": "^2.9.1"
   },
   "devDependencies": {
     "@types/node": "^26.6.3",

@@ -41,9 +41,45 @@ export interface EliteaAgent {
   tags?: Array<{ name: string }>;
 }
 
+export interface AgentVersionSummary {
+  id: number;
+  name: string;
+  status?: string;
+  created_at?: string;
+  author_name?: string | null;
+  author_email?: string | null;
+}
+
 export interface EliteaAgentDetails extends EliteaAgent {
-  versions: Array<{ id: number; name: string; status?: string }>;
-  version_details?: { id: number; name: string };
+  versions: AgentVersionSummary[];
+  /** The default version. */
+  version_details?: { id: number; name: string; agent_type?: string };
+}
+
+export interface AgentVariable {
+  name: string;
+  value?: unknown;
+}
+
+/** GET version/...; kept as the server sends it, the typed fields are the ones the CLI reads. */
+export interface AgentVersion {
+  id: number;
+  name: string;
+  status?: string;
+  agent_type?: string;
+  instructions?: string | null;
+  llm_settings?: { model_name?: string | null } | null;
+  tools?: Array<{ name?: string; type?: string; toolkit_name?: string }> | null;
+  variables?: AgentVariable[] | null;
+  conversation_starters?: unknown[] | null;
+  welcome_message?: string | null;
+  tags?: Array<{ name: string }> | null;
+  [key: string]: unknown;
+}
+
+export interface EliteaTag {
+  id: number;
+  name: string;
 }
 
 export interface ConversationParticipant {
@@ -65,6 +101,15 @@ export interface MessageGroup {
   author_participant_id: number;
   is_streaming: boolean;
   message_items: Array<{ item_type: string; item_details?: { content?: string } }>;
+  /** is_error/error: the run failed; hitl_interrupt(s)/authorization_requests: paused for the user. */
+  meta?: {
+    is_error?: boolean;
+    error?: string | null;
+    hitl_interrupt?: unknown;
+    hitl_interrupts?: unknown[];
+    authorization_requests?: unknown[];
+    [key: string]: unknown;
+  };
 }
 
 /** The PAT is missing, expired, revoked, or lacks access. */
@@ -80,6 +125,30 @@ export class EliteaError extends Error {
     super(message);
     this.name = "EliteaError";
   }
+}
+
+/** HTTP 403: the token works but lacks access to this project or item. */
+export class AccessDeniedError extends EliteaError {
+  constructor(path: string) {
+    super(`EliteA denied access to ${path} (403) — your role or token may lack this permission`, 403);
+    this.name = "AccessDeniedError";
+  }
+}
+
+export interface ListAgentsOptions {
+  /** Name search on the server. */
+  query?: string;
+  pageSize?: number;
+  /** "agent" (default): classic agents; "pipeline": pipelines; "all": both. */
+  type?: ApplicationType;
+  /** Every tag must match (the server ANDs them). */
+  tagIds?: number[];
+  /** Any version with one of these statuses. */
+  statuses?: string[];
+  /** Any version by this author. */
+  authorId?: number;
+  /** Stop after this many rows. */
+  maxTotal?: number;
 }
 
 /** Public project that holds the shared models; not a useful default for users. */
@@ -123,9 +192,7 @@ export class EliteaClient {
       if (/forward-auth|access_denied|login/.test(location)) throw new AuthError();
       throw new EliteaError(`EliteA ${path} redirected unexpectedly to ${location || "(no location)"}`, res.status);
     }
-    if (res.status === 403) {
-      throw new AuthError(`EliteA denied access to ${path} (403) — the token may lack permissions`);
-    }
+    if (res.status === 403) throw new AccessDeniedError(path.split("?")[0]!);
     if (res.status === 429) throw new EliteaError("EliteA budget for this project is exhausted (429)", 429);
     if (res.status === 503 && !retried) {
       // Busy worker pool: {"error": "temporarily_unavailable", "retry_after": 5}
@@ -161,17 +228,20 @@ export class EliteaClient {
    * applications too and share this endpoint: `type` "agent" (the default) leaves them out,
    * "pipeline" returns only them, "all" both.
    */
-  async listAgents(
-    projectId: number,
-    opts: { query?: string; pageSize?: number; type?: ApplicationType } = {},
-  ): Promise<EliteaAgent[]> {
-    const limit = opts.pageSize ?? 100;
+  async listAgents(projectId: number, opts: ListAgentsOptions = {}): Promise<EliteaAgent[]> {
+    const pageSize = opts.pageSize ?? 100;
     const type = opts.type ?? "agent";
+    const max = opts.maxTotal ?? Infinity;
     const agents: EliteaAgent[] = [];
     for (;;) {
+      const limit = Math.min(pageSize, max - agents.length);
+      if (limit <= 0) return agents;
       const params = new URLSearchParams({ limit: String(limit), offset: String(agents.length) });
       if (opts.query) params.set("query", opts.query);
       if (type !== "all") params.set("agents_type", type === "agent" ? "classic" : "pipeline");
+      if (opts.tagIds?.length) params.set("tags", opts.tagIds.join(","));
+      if (opts.statuses?.length) params.set("statuses", opts.statuses.join(","));
+      if (opts.authorId !== undefined) params.set("author_id", String(opts.authorId));
       const page = await this.get<{ total: number; rows: EliteaAgent[] }>(
         `/api/v2/elitea_core/applications/prompt_lib/${projectId}?${params}`,
       );
@@ -185,11 +255,34 @@ export class EliteaClient {
     return this.get<EliteaAgentDetails>(`/api/v2/elitea_core/application/prompt_lib/${projectId}/${agentId}`);
   }
 
+  /** Full configuration of one version (instructions, model, tools, variables…). */
+  getVersion(projectId: number, agentId: number, versionId: number): Promise<AgentVersion> {
+    return this.get<AgentVersion>(`/api/v2/elitea_core/version/prompt_lib/${projectId}/${agentId}/${versionId}`);
+  }
+
+  /** Skills attached to a version (they are not part of the version object). */
+  async getVersionSkills(projectId: number, versionId: number): Promise<Array<{ name: string; skill_id?: number }>> {
+    const res = await this.get<{ skills?: Array<{ name: string; skill_id?: number }> }>(
+      `/api/v2/elitea_core/application_skills/prompt_lib/${projectId}/${versionId}`,
+    );
+    return res.skills ?? [];
+  }
+
+  /** Tags used in the project; the list API filters by tag id, not name. */
+  async listTags(projectId: number): Promise<EliteaTag[]> {
+    const res = await this.get<{ rows: EliteaTag[] }>(`/api/v2/elitea_core/tags/prompt_lib/${projectId}`);
+    return res.rows.map(({ id, name }) => ({ id, name }));
+  }
+
   /** Private conversation with one agent; EliteA adds the user's own participant. */
   createConversation(
     projectId: number,
-    opts: { name: string; agentId: number; versionId?: number },
+    opts: { name: string; agentId: number; versionId?: number; variables?: AgentVariable[] },
   ): Promise<AgentConversation> {
+    const settings = {
+      ...(opts.versionId === undefined ? {} : { version_id: opts.versionId }),
+      ...(opts.variables === undefined ? {} : { variables: opts.variables }),
+    };
     return this.request<AgentConversation>("POST", `/api/v2/elitea_core/conversations/prompt_lib/${projectId}`, {
       name: opts.name,
       is_private: true,
@@ -197,7 +290,7 @@ export class EliteaClient {
         {
           entity_name: "application",
           entity_meta: { id: opts.agentId, project_id: projectId },
-          ...(opts.versionId === undefined ? {} : { entity_settings: { version_id: opts.versionId } }),
+          ...(Object.keys(settings).length === 0 ? {} : { entity_settings: settings }),
         },
       ],
     });
