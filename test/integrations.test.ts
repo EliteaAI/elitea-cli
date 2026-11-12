@@ -103,6 +103,14 @@ describe("claude", () => {
     expect(JSON.stringify(spec)).not.toContain("ELITEA_CLI_TOKEN");
   });
 
+  it("tells the elitea-cli shim which environment to use, never the token", async () => {
+    const tools = { shimDir: "/h/bin", pluginDir: "/h/claude-plugin" };
+    const spec = await claude.prepare(ctx({ tools, environment: "dev" }));
+    expect(spec.env.ELITEA_CLI_ENV).toBe("dev");
+    expect(spec.env.ELITEA_CLI_TOKEN).toBeUndefined();
+    expect((await claude.prepare(ctx({ tools }))).env.ELITEA_CLI_ENV).toBeUndefined();
+  });
+
   it("respects a user-set auto mode server", async () => {
     process.env.CLAUDE_CODE_AUTO_MODE_SERVER = "1";
     expect((await claude.prepare(ctx())).env.CLAUDE_CODE_AUTO_MODE_SERVER).toBeUndefined();

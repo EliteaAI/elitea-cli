@@ -1,5 +1,6 @@
 import { search } from "@inquirer/prompts";
-import { saveConfig } from "../config.js";
+import { updateEnvironment } from "../config.js";
+import { CliError } from "../errors.js";
 import { type EliteaClient, type EliteaProject, type EliteaUser, PUBLIC_PROJECT_ID, projectLabel, projectName } from "../elitea.js";
 import { isInteractive, requireSession } from "../session.js";
 
@@ -56,7 +57,10 @@ export async function projectCommand(id: string | undefined): Promise<void> {
   const session = await requireSession();
   const user = await session.client.getUser();
   const project = await chooseProject(session.client, user, { requested: id, current: session.projectId });
-  await saveConfig({ ...session.config, project: { id: project.id, name: projectName(project, user) } });
+  if (session.temporary) {
+    throw new CliError(`${session.url} is not a saved environment — set ELITEA_CLI_PROJECT=${project.id}, or run \`elitea-cli login --url ${session.url}\``, 2);
+  }
+  await updateEnvironment(session.name, (env) => ({ ...env, project: { id: project.id, name: projectName(project, user) } }));
   console.log(`Project set to ${projectLabel(project, user)}`);
 }
 

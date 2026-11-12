@@ -3,8 +3,10 @@ import type { EliteaModel, ModelCatalog } from "../elitea.js";
 export interface LaunchContext {
   /** Resolved path of the agent executable. */
   bin: string;
-  /** EliteA base URL, e.g. https://next.elitea.ai */
+  /** EliteA base URL of the selected environment, e.g. https://elitea.example.com */
   url: string;
+  /** Saved environment name; elitea-cli inside the agent uses it (ELITEA_CLI_ENV). Unset for a temporary one. */
+  environment?: string;
   token: string;
   projectId: number;
   catalog: ModelCatalog;
