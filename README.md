@@ -1,6 +1,6 @@
 # elitea-cli
 
-Run Claude Code, Codex and other coding agents on top of [EliteA](https://next.elitea.ai) —
+Run Claude Code on top of [EliteA](https://next.elitea.ai) —
 like `ollama launch`, but the models come from your EliteA project.
 
 ```sh
@@ -8,7 +8,6 @@ npm install -g @eliteaai/elitea-cli
 
 elitea-cli login            # paste a personal access token, pick a project
 elitea-cli launch claude    # Claude Code
-elitea-cli launch codex     # Codex CLI
 ```
 
 ## Commands
@@ -22,7 +21,7 @@ elitea-cli launch codex     # Codex CLI
 | `elitea-cli models` | Models available in the active project |
 | `elitea-cli agents [--search text] [--project id\|name] [--json]` | EliteA agents in the active project |
 | `elitea-cli agents chat [agent] [message] [-c conversation] [--agent-version name] [--json]` | Chat with an agent: interactive without a message, one answer with one |
-| `elitea-cli launch <claude\|codex> [-m model] [--fast-model model] [--pick] [--print] [-- agent args]` | Start an agent wired to EliteA |
+| `elitea-cli launch claude [-m model] [--fast-model model] [--pick] [--print] [-- agent args]` | Start an agent wired to EliteA |
 
 The model you choose is remembered per agent; `--pick` chooses again. Everything after `--` goes
 to the agent unchanged, e.g. `elitea-cli launch claude -- -p "explain this repo"`.
@@ -33,8 +32,6 @@ to the agent unchanged, e.g. `elitea-cli launch claude -- -p "explain this repo"
 - **Claude Code** gets environment variables: `ANTHROPIC_BASE_URL=<eliteA>/llm`, bearer token,
   `X-Project-Id` header, and your models for the opus/sonnet/haiku slots. It also gets the EliteA
   context (below) through command-line flags.
-- **Codex** gets `-c` overrides only (a `model_providers.elitea-cli` entry using the Responses API) plus
-  a model catalog generated from your installed Codex version. Your `~/.codex/config.toml` is never modified.
 
 The token is stored in the OS keychain (falls back to `~/.elitea-cli/credentials.json`, mode 0600).
 
