@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { AgentChat, conversationName } from "../src/agentChat.js";
+import { AgentChat, conversationName, replyOutcome } from "../src/agentChat.js";
 import { findAgent } from "../src/commands/agentChat.js";
 import { EliteaClient, EliteaError } from "../src/elitea.js";
 
@@ -14,8 +14,15 @@ const conversation = {
   ],
 };
 
-function group(id: number, content: string, streaming = false) {
-  return { id, uuid: `g${id}`, author_participant_id: 5, is_streaming: streaming, message_items: [{ item_type: "text_message", item_details: { content } }] };
+function group(id: number, content: string, streaming = false, meta: Record<string, unknown> = {}) {
+  return {
+    id,
+    uuid: `g${id}`,
+    author_participant_id: 5,
+    is_streaming: streaming,
+    meta,
+    message_items: [{ item_type: "text_message", item_details: { content } }],
+  };
 }
 
 /** Records requests; GET messages returns the next queued page. */
@@ -80,6 +87,50 @@ describe("AgentChat", () => {
     const { client } = fakeEliteA(Array.from({ length: 5 }, () => [group(11, "", true)]));
     const chat = new AgentChat(client, 4, { agentId: 9, agentName: "Calc", ...fast, timeoutMs: -1 });
     await expect(chat.send("slow")).rejects.toThrow("https://elitea.test/app/chat/7");
+  });
+});
+
+describe("AgentChat.start / waitFor", () => {
+  it("passes the version and the full variable list to a new conversation", async () => {
+    const { client, calls } = fakeEliteA([]);
+    const chat = new AgentChat(client, 4, { agentId: 9, agentName: "Calc", versionId: 3, variables: [{ name: "lang", value: "uk" }], ...fast });
+    expect(await chat.start("hi")).toEqual({ conversationId: 7, replyId: 11 });
+    expect(calls[0]!.body).toMatchObject({
+      participants: [{ entity_settings: { version_id: 3, variables: [{ name: "lang", value: "uk" }] } }],
+    });
+  });
+
+  it.each([
+    ["finished", group(11, "done"), { status: "finished", answer: "done" }],
+    ["failed (is_error)", group(11, "partial", false, { is_error: true, error: "Node 'fetch' failed" }), { status: "failed", answer: "partial", error: "Node 'fetch' failed" }],
+    ["failed (provider error text)", group(11, "Error: Error code: 400 - {bad}"), { status: "failed", error: "Error: Error code: 400 - {bad}" }],
+    ["waiting (HITL)", group(11, "Approve?", false, { hitl_interrupt: { id: "x" } }), { status: "waiting_for_input" }],
+    ["waiting (MCP auth)", group(11, "", false, { authorization_requests: [{ id: "a" }] }), { status: "waiting_for_input" }],
+  ])("classifies a %s reply", async (_label, reply, expected) => {
+    const { client } = fakeEliteA([[reply]]);
+    const chat = new AgentChat(client, 4, { agentId: 9, agentName: "P", ...fast });
+    const run = await chat.start("go");
+    expect(await chat.waitFor(run)).toMatchObject(expected);
+  });
+
+  it("does not treat resolved interrupts as pending", () => {
+    expect(replyOutcome(group(1, "ok", false, { hitl_interrupts: [], authorization_requests: [] })).status).toBe("finished");
+  });
+
+  it("stops at the timeout and when the signal aborts", async () => {
+    const { client } = fakeEliteA(Array.from({ length: 5 }, () => [group(11, "", true)]));
+    const chat = new AgentChat(client, 4, { agentId: 9, agentName: "P", ...fast });
+    const run = await chat.start("go");
+    expect((await chat.waitFor(run, { timeoutMs: -1 })).status).toBe("timeout");
+    const abort = new AbortController();
+    abort.abort();
+    expect((await chat.waitFor(run, { signal: abort.signal })).status).toBe("interrupted");
+  });
+
+  it("send() reports a HITL pause instead of returning the question as the answer", async () => {
+    const { client } = fakeEliteA([[group(11, "Approve?", false, { hitl_interrupt: { id: "x" } })]]);
+    const chat = new AgentChat(client, 4, { agentId: 9, agentName: "P", ...fast });
+    await expect(chat.send("go")).rejects.toThrow("waiting for your input; answer it in EliteA: https://elitea.test/app/chat/7");
   });
 });
 

@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { pluginFiles, sessionContext, shimScript, writeClaudeTools } from "../src/integrations/claudePlugin.js";
+import { ELITEA_PERMISSIONS, pluginFiles, sessionContext, shimScript, writeClaudeTools } from "../src/integrations/claudePlugin.js";
 
 describe("claude plugin", () => {
   let home: string;
@@ -49,6 +49,17 @@ describe("claude plugin", () => {
     expect(skill).toMatch(/^---\nname: elitea\n/);
     expect(skill).toContain("elitea-cli agents chat <agent id or name>");
     expect(skill).toContain("--conversation");
+    expect(skill).toContain("elitea-cli pipelines run <pipeline id or name>");
+    expect(skill).not.toContain("pipelines are not listed");
+  });
+
+  it("runs read-only commands without a prompt and asks before any run", () => {
+    expect(ELITEA_PERMISSIONS.allow).toContain("Bash(elitea-cli pipelines:*)");
+    expect(ELITEA_PERMISSIONS.ask).toEqual([
+      "Bash(elitea-cli agents chat:*)",
+      "Bash(elitea-cli agents run:*)",
+      "Bash(elitea-cli pipelines run:*)",
+    ]);
   });
 
   it("shim quotes paths with single quotes", () => {
@@ -70,8 +81,8 @@ describe("sessionContext", () => {
       [
         "You are running inside elitea-cli, connected to EliteA (https://next.elitea.ai).",
         "User: Jo Doe. Active EliteA project: Personal (id 12321).",
-        "The user's EliteA agents live in this project and run on the EliteA server.",
-        "Use the `elitea` skill (the `elitea-cli` command) for anything about EliteA projects or agents, or running them.",
+        "The user's EliteA agents and pipelines live in this project and run on the EliteA server.",
+        "Use the `elitea` skill (the `elitea-cli` command) for anything about EliteA projects, agents or pipelines, or running them.",
       ].join("\n"),
     );
   });

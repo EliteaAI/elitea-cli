@@ -98,7 +98,7 @@ describe("claude", () => {
     const settings = JSON.parse(at("--settings"));
     expect(settings.modelPicker.replaceBuiltInOptions).toBe(true);
     expect(settings.permissions.allow).toContain("Bash(elitea-cli agents:*)");
-    expect(settings.permissions.ask).toEqual(["Bash(elitea-cli agents chat:*)"]);
+    expect(settings.permissions.ask).toEqual(["Bash(elitea-cli agents chat:*)", "Bash(elitea-cli agents run:*)", "Bash(elitea-cli pipelines run:*)"]);
     expect(spec.env.PATH!.split(":")[0]).toBe("/h/bin");
     expect(JSON.stringify(spec)).not.toContain("ELITEA_CLI_TOKEN");
   });
