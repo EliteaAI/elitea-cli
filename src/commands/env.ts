@@ -1,9 +1,10 @@
-import { confirm } from "@inquirer/prompts";
 import { loadConfig, saveConfig } from "../config.js";
 import { tokenStore } from "../credentials.js";
 import { assertEnvName, assertOriginFree, confirmInsecureUrl, parseUrlArg } from "../environments.js";
 import { CliError } from "../errors.js";
-import { isInteractive, selectEnvironment, unknownEnvironment } from "../session.js";
+import { confirmDestructive } from "../interaction.js";
+import { parseFormat, printData } from "../output.js";
+import { selectEnvironment, unknownEnvironment } from "../session.js";
 
 export interface OutputOptions {
   output?: string;
@@ -55,10 +56,10 @@ export async function listEnvironments(): Promise<EnvRow[]> {
 }
 
 export async function envListCommand(opts: OutputOptions): Promise<void> {
-  const json = wantsJson(opts);
+  const format = parseFormat(opts);
   const rows = await listEnvironments();
-  if (json) {
-    console.log(JSON.stringify(rows, null, 2));
+  if (format !== "text") {
+    printData(format, rows);
     return;
   }
   if (rows.length === 0) {
@@ -108,14 +109,15 @@ export async function envRemoveCommand(name: string, opts: { yes?: boolean }): P
   const config = await loadConfig();
   const env = config.environments[name];
   if (!env) throw unknownEnvironment(name);
-  if (!opts.yes) {
-    if (!isInteractive()) throw new CliError(`Refusing to remove environment ${name} without confirmation — pass --yes`, 2);
-    const ok = await confirm({
-      message: `Remove environment '${name}' (${env.url})? Its stored token is deleted too.`,
-      default: false,
-    });
-    if (!ok) return;
-  }
+  const ok = await confirmDestructive({
+    action: "remove",
+    type: "environment",
+    name,
+    id: env.url,
+    note: "Its stored token is deleted too.",
+    yes: opts.yes,
+  });
+  if (!ok) return;
   await tokenStore.delete(env.url);
   delete config.environments[name];
   if (config.active === name) config.active = undefined;

@@ -1,3 +1,7 @@
+import { ctx, isDebug } from "./context.js";
+import { BUSY_MESSAGE, httpErrorMessage, parseErrorBody } from "./platformError.js";
+import { redactBody, redactPath, scrub } from "./redact.js";
+
 export interface EliteaUser {
   id: number;
   name: string;
@@ -121,7 +125,13 @@ export class AuthError extends Error {
 }
 
 export class EliteaError extends Error {
-  constructor(message: string, readonly status: number) {
+  constructor(
+    message: string,
+    /** HTTP status; 0 when the server could not be reached. */
+    readonly status: number,
+    /** The platform's error code (`TOKEN_SCOPE_PROJECT`, `project_budget_exceeded`, …). */
+    readonly code?: string,
+  ) {
     super(message);
     this.name = "EliteaError";
   }
@@ -129,10 +139,24 @@ export class EliteaError extends Error {
 
 /** HTTP 403: the token works but lacks access to this project or item. */
 export class AccessDeniedError extends EliteaError {
-  constructor(path: string) {
-    super(`EliteA denied access to ${path} (403) — your role or token may lack this permission`, 403);
+  constructor(message = "Forbidden", code?: string) {
+    super(message, 403, code);
     this.name = "AccessDeniedError";
   }
+}
+
+export type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+
+export interface RequestOptions {
+  /** JSON body. */
+  body?: unknown;
+  /** multipart/form-data body (file uploads); fetch sets the boundary. */
+  form?: FormData;
+  /** A body sent unchanged (the `api` command's -f); set Content-Type in `headers`. */
+  raw?: string;
+  /** Added to the path's query string. */
+  query?: Record<string, string | number | boolean | undefined>;
+  headers?: Record<string, string>;
 }
 
 export interface ListAgentsOptions {
@@ -169,42 +193,70 @@ export class EliteaClient {
     return this.request<T>("GET", path);
   }
 
-  private async request<T>(method: "GET" | "POST", path: string, body?: unknown, retried = false): Promise<T> {
+  /**
+   * One HTTP exchange with the token, nothing mapped (the `api` command uses it as is).
+   * Redirects are never followed; an unreachable server is an EliteaError with status 0.
+   */
+  async send(method: HttpMethod, path: string, opts: RequestOptions = {}): Promise<Response> {
+    const url = withQuery(path, opts.query);
+    const jsonBody = opts.body !== undefined && opts.form === undefined && opts.raw === undefined;
+    const headers: Record<string, string> = {
+      Accept: "application/json",
+      ...(jsonBody ? { "Content-Type": "application/json" } : {}),
+      ...opts.headers,
+      Authorization: `Bearer ${this.token}`,
+    };
+    const body = opts.form ?? opts.raw ?? (jsonBody ? JSON.stringify(opts.body) : undefined);
+    const started = Date.now();
     let res: Response;
     try {
-      res = await this.fetchImpl(`${this.baseUrl}${path}`, {
-        method,
-        headers: {
-          Authorization: `Bearer ${this.token}`,
-          Accept: "application/json",
-          ...(body === undefined ? {} : { "Content-Type": "application/json" }),
-        },
-        body: body === undefined ? undefined : JSON.stringify(body),
-        // An invalid token gets a 302 to the login page, not a 401.
-        redirect: "manual",
-      });
+      // An invalid token gets a 302 to the login page, not a 401.
+      res = await this.fetchImpl(`${this.baseUrl}${url}`, { method, headers, body, redirect: "manual" });
     } catch (err) {
-      throw new EliteaError(`Cannot reach ${this.baseUrl}: ${(err as Error).message}`, 0);
+      const reason = ((err as Error).cause as Error | undefined)?.message ?? (err as Error).message;
+      if (isDebug()) console.error(`${method} ${redactPath(url, ctx.secretKeys)} → network error (${Date.now() - started} ms)`);
+      throw new EliteaError(`Cannot reach ${this.baseUrl}: ${reason}`, 0);
     }
+    if (isDebug()) await this.logExchange(method, url, typeof body === "string" ? body : opts.form ? "(multipart form)" : "", res, started);
+    return res;
+  }
+
+  /** --debug: `METHOD path?query → status (ms)`, then the masked bodies; never the token (AC-13). */
+  private async logExchange(method: string, url: string, body: string, res: Response, started: number): Promise<void> {
+    const extra = ctx.secretKeys;
+    console.error(`${method} ${redactPath(url, extra)} → ${res.status} (${Date.now() - started} ms)`);
+    if (body) console.error(`  request:  ${body.startsWith("(") ? body : redactBody(body, extra)}`);
+    const text = scrub(await res.clone().text().catch(() => ""), this.token);
+    if (text) console.error(`  response: ${redactBody(text, extra)}`);
+  }
+
+  /** A call with EliteA's errors mapped to CLI errors (AC-8…AC-12). JSON in, JSON out; 204 → undefined. */
+  async request<T>(method: HttpMethod, path: string, options: RequestOptions = {}, retried = false): Promise<T> {
+    const res = await this.send(method, path, options);
+    const bare = path.split("?")[0]!;
     if (res.status === 401) throw new AuthError();
     if (res.status >= 300 && res.status < 400) {
       const location = res.headers.get("location") ?? "";
-      if (/forward-auth|access_denied|login/.test(location)) throw new AuthError();
-      throw new EliteaError(`EliteA ${path} redirected unexpectedly to ${location || "(no location)"}`, res.status);
+      if (isLoginRedirect(location)) throw new AuthError();
+      throw new EliteaError(`EliteA ${bare} redirected unexpectedly to ${location || "(no location)"}`, res.status);
     }
-    if (res.status === 403) throw new AccessDeniedError(path.split("?")[0]!);
-    if (res.status === 429) throw new EliteaError("EliteA budget for this project is exhausted (429)", 429);
-    if (res.status === 503 && !retried) {
-      // Busy worker pool: {"error": "temporarily_unavailable", "retry_after": 5}
-      const retryAfter = Number((await errorBody(res)).retry_after) || 5;
-      await new Promise((resolve) => setTimeout(resolve, Math.min(retryAfter, 30) * 1000));
-      return this.request<T>(method, path, body, true);
+    if (res.ok) {
+      const text = await res.text();
+      return (text ? JSON.parse(text) : undefined) as T;
     }
-    if (!res.ok) {
-      const detail = (await errorBody(res)).error;
-      throw new EliteaError(`EliteA ${path} failed: HTTP ${res.status}${detail ? ` — ${detail}` : ""}`, res.status);
+    const err = parseErrorBody(await res.text().catch(() => ""), res.headers.get("retry-after"));
+    if (res.status === 503) {
+      // Only reads are retried: a write may have been applied before the 503 (AC-12).
+      if (method !== "GET") throw new EliteaError(BUSY_MESSAGE, 503, err.code);
+      if (!retried) {
+        // Busy worker pool: {"error": "temporarily_unavailable", "retry_after": 5}
+        await new Promise((resolve) => setTimeout(resolve, Math.min(err.retryAfter ?? 5, 30) * 1000));
+        return this.request<T>(method, path, options, true);
+      }
     }
-    return (await res.json()) as T;
+    const message = httpErrorMessage(res.status, bare, err, { projectId: ctx.projectId, operation: ctx.operation });
+    if (res.status === 403) throw new AccessDeniedError(message, err.code);
+    throw new EliteaError(message, res.status, err.code);
   }
 
   getUser(): Promise<EliteaUser> {
@@ -283,7 +335,7 @@ export class EliteaClient {
       ...(opts.versionId === undefined ? {} : { version_id: opts.versionId }),
       ...(opts.variables === undefined ? {} : { variables: opts.variables }),
     };
-    return this.request<AgentConversation>("POST", `/api/v2/elitea_core/conversations/prompt_lib/${projectId}`, {
+    return this.request<AgentConversation>("POST", `/api/v2/elitea_core/conversations/prompt_lib/${projectId}`, { body: {
       name: opts.name,
       is_private: true,
       participants: [
@@ -293,7 +345,7 @@ export class EliteaClient {
           ...(Object.keys(settings).length === 0 ? {} : { entity_settings: settings }),
         },
       ],
-    });
+    } });
   }
 
   getConversation(projectId: number, conversationId: number): Promise<AgentConversation> {
@@ -310,10 +362,7 @@ export class EliteaClient {
     text: string,
   ): Promise<{ request_message_group_id: number; response_message_group_id: number }> {
     return this.request("POST", `/api/v2/elitea_core/messages/prompt_lib/${projectId}/${conversationUuid}`, {
-      user_input: text,
-      participant_id: participantId,
-      await_task_timeout: 0,
-      return_task_id: true,
+      body: { user_input: text, participant_id: participantId, await_task_timeout: 0, return_task_id: true },
     });
   }
 
@@ -326,19 +375,16 @@ export class EliteaClient {
   }
 }
 
-async function errorBody(res: Response): Promise<{ error?: string; retry_after?: number }> {
-  try {
-    const body = (await res.json()) as unknown;
-    // Pydantic validation failures come back as [{loc, msg}, …].
-    if (Array.isArray(body)) {
-      const msgs = body.map((e: { loc?: unknown[]; msg?: string }) => `${(e.loc ?? []).join(".")}: ${e.msg}`);
-      return { error: msgs.join("; ") };
-    }
-    const obj = body as { error?: unknown; retry_after?: unknown };
-    return { error: typeof obj.error === "string" ? obj.error : undefined, retry_after: Number(obj.retry_after) };
-  } catch {
-    return {};
-  }
+/** EliteA sends an invalid token to its login page instead of answering 401. */
+export function isLoginRedirect(location: string): boolean {
+  return /forward-auth|access_denied|login/.test(location);
+}
+
+function withQuery(path: string, query: RequestOptions["query"]): string {
+  const entries = Object.entries(query ?? {}).filter(([, v]) => v !== undefined) as Array<[string, string | number | boolean]>;
+  if (entries.length === 0) return path;
+  const params = new URLSearchParams(entries.map(([k, v]) => [k, String(v)]));
+  return `${path}${path.includes("?") ? "&" : "?"}${params}`;
 }
 
 /** Human name for a project; personal projects are named project_user_<id> in EliteA. */

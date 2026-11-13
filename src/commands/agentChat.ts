@@ -1,7 +1,8 @@
 import { input } from "@inquirer/prompts";
 import { AgentChat } from "../agentChat.js";
 import type { EliteaAgent } from "../elitea.js";
-import { usageError } from "../errors.js";
+import { needsTerminal, usageError } from "../errors.js";
+import { parseFormat } from "../output.js";
 import { pickAgent, resolveAgent, resolveVersion } from "../resolve.js";
 import { isInteractive } from "../session.js";
 import { projectSession, withSpinner } from "./common.js";
@@ -13,6 +14,7 @@ export interface AgentChatCommandOptions {
   conversation?: string;
   project?: string;
   json?: boolean;
+  output?: string;
 }
 
 function parseConversation(value: string | undefined): number | undefined {
@@ -73,9 +75,10 @@ export async function agentChatCommand(
     new AgentChat(client, projectId, { agentId: a.id, agentName: a.name, versionId: a === agent ? versionId : undefined, conversation: conv });
   const chat = makeChat(agent, conversation);
 
+  const json = parseFormat(opts) === "json";
   if (message !== undefined) {
     const reply = await withSpinner(`${agent.name} is thinking…`, chat.send(message));
-    if (opts.json) {
+    if (json) {
       console.log(JSON.stringify({ answer: reply.answer, conversation_id: reply.conversationId, agent: { id: agent.id, name: agent.name } }, null, 2));
     } else {
       console.log(reply.answer);
@@ -84,7 +87,7 @@ export async function agentChatCommand(
     return;
   }
 
-  if (!isInteractive()) throw usageError("No message given and not running in a terminal");
+  if (!isInteractive()) throw needsTerminal("Interactive chat", 'give the message: elitea-cli agents chat <agent> "<message>"');
   await repl(chat, agent, agents, (a) => makeChat(a));
   if (chat.conversationUrl) console.error(`Conversation saved in EliteA: ${chat.conversationUrl}`);
 }

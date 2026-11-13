@@ -1,6 +1,6 @@
 import { search } from "@inquirer/prompts";
 import type { AgentVersionSummary, EliteaAgent, EliteaAgentDetails, EliteaClient } from "./elitea.js";
-import { notFoundError, usageError } from "./errors.js";
+import { needsTerminal, notFoundError } from "./errors.js";
 import { isInteractive } from "./session.js";
 
 /** Which command family names the item: `agents …` accepts any application, `pipelines …` only pipelines. */
@@ -64,7 +64,7 @@ export async function resolveAgent(
   const agents = await client.listAgents(projectId, { type: "all" });
   if (agents.length === 0) throw notFoundError(`No agents in project ${projectId}`);
   if (query === undefined) {
-    if (!isInteractive()) throw usageError(`Name the ${kind}: ${usage}`);
+    if (!isInteractive()) throw needsTerminal(`The ${kind} picker`, `name the ${kind}: ${usage}`);
     return { agent: await pickAgent(kind === "pipeline" ? agents.filter(isPipeline) : agents), agents };
   }
   return { agent: resolveIn(agents, query, kind), agents };

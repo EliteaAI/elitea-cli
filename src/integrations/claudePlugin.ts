@@ -53,7 +53,7 @@ active project.
 
 ## Agents
 
-\`elitea-cli agents --json [--search <text>] [--type agent|pipeline] [--project <id|name>]\` →
+\`elitea-cli agents list --json [--search <text>] [--type agent|pipeline] [--project <id|name>]\` →
 \`[{id, name, description, status, agent_type, tags}]\`. Agents and pipelines are listed together;
 \`agent_type: "pipeline"\` marks a pipeline. \`elitea-cli pipelines list --json\` lists only pipelines.
 
@@ -107,13 +107,15 @@ input use \`-f -\` with a quoted heredoc on stdin. Use a Bash timeout of 600000 
 
 - "Not logged in" or "rejected the token" → tell the user to run \`elitea-cli login\` in a terminal.
   Never ask for, read or handle the token yourself.
-- "budget … exhausted (429)" → the project's EliteA budget is used up; tell the user.
+- Exit 7 / "(429)" → a limit was reached: "budget … exhausted" means the project's EliteA budget
+  is used up; other texts name the limit (run caps…). Tell the user, with "Retry after N s" if given.
 - "The agent is still working; check the conversation in EliteA: <url>" → the run did not finish
   in time. "The agent is waiting for your input…" → it needs a human approval in EliteA. Give the
   user the link.
-- "Agent … not found" / "matches several" → run \`elitea-cli agents --json\` and pick again.
+- "Agent … not found" / "matches several" → run \`elitea-cli agents list --json\` and pick again.
 - "… is an agent, not a pipeline" → use \`agents chat\` for it.
-- "denied access (403)" → the user's role in that project doesn't allow this; tell the user.
+- Exit 4 / "Forbidden" → the user's role in that project doesn't allow this; "This token is not
+  allowed to do this" → the token's scope is too narrow. Tell the user; don't retry.
 `;
 
 const COMMANDS: Record<string, string> = {
@@ -123,7 +125,7 @@ argument-hint: "[search text] [--project <id|name>]"
 ---
 List the EliteA agents and pipelines. Arguments: $ARGUMENTS
 
-Run \`elitea-cli agents --json\`. If the arguments contain search text, add \`--search "<text>"\`;
+Run \`elitea-cli agents list --json\`. If the arguments contain search text, add \`--search "<text>"\`;
 if they name a project, add \`--project <id|name>\`.
 Show a compact table: id, name, type (agent or pipeline), a one-line description.
 `,
@@ -140,7 +142,7 @@ argument-hint: <agent> <message>
 Send a message to an EliteA agent. Arguments: $ARGUMENTS
 
 The first argument (a quoted phrase, a name or an id) is the agent; the rest is the message.
-If the agent is unclear, run \`elitea-cli agents --json\` and pick the matching one.
+If the agent is unclear, run \`elitea-cli agents list --json\` and pick the matching one.
 For a pipeline (\`agent_type: "pipeline"\`) run \`elitea-cli pipelines run <pipeline> "<message>" -o json\`;
 otherwise run \`elitea-cli agents chat <agent> "<message>" --json\`, as the \`elitea\` skill describes. If this
 session already talked to the same agent about the same task, add
@@ -191,18 +193,62 @@ export function sessionContext(opts: { url: string; projectId: number; projectNa
   ].join("\n");
 }
 
+/** Read-only commands Claude Code may run without asking (AC-23); later stories add theirs here only. */
+export const READ_COMMANDS = [
+  "status",
+  "projects",
+  "models",
+  "agents",
+  "agents list",
+  "agents get",
+  "agents versions",
+  "pipelines list",
+  "pipelines get",
+  "pipelines versions",
+  "pipelines validate",
+  "toolkits list",
+  "toolkits get",
+  "toolkits types",
+  "toolkits tools",
+  "credentials list",
+  "credentials get",
+  "credentials types",
+  "chats list",
+  "chats show",
+  "env list",
+] as const;
+
 /**
- * Read-only elitea-cli calls run without a prompt; `chat` and `run` start a remote agent or
- * pipeline (budget, write tools) and always ask. Claude Code checks ask before allow.
+ * Commands that change something or run a remote agent: they always ask, even in headless `-p`
+ * runs (ask rules beat --allowedTools). Prefixes never overlap a read command.
+ */
+export const ASK_COMMANDS = [
+  "login",
+  "logout",
+  "project",
+  "launch",
+  "api",
+  "env add",
+  "env use",
+  "env remove",
+  "config set",
+  "config unset",
+  ...["agents", "pipelines"].flatMap((r) =>
+    ["run", "create", "update", "edit", "delete", "version create", "version default"].map((v) => `${r} ${v}`),
+  ),
+  "agents chat",
+  "agents toolkits",
+  ...["toolkits", "credentials"].flatMap((r) => ["create", "update", "delete", "test"].map((v) => `${r} ${v}`)),
+  "chats send",
+  "chats delete",
+] as const;
+
+/**
+ * Exactly the read commands run without a prompt (AC-23). A bare `agents` is allowed only with
+ * no arguments: `agents --json delete 1` reaches the delete subcommand, so no `agents:*` prefix.
+ * Anything not allowed prompts in Claude Code's default mode; ASK_COMMANDS prompt in every mode.
  */
 export const ELITEA_PERMISSIONS = {
-  allow: [
-    "Bash(elitea-cli status)",
-    "Bash(elitea-cli status:*)",
-    "Bash(elitea-cli projects:*)",
-    "Bash(elitea-cli models:*)",
-    "Bash(elitea-cli agents:*)",
-    "Bash(elitea-cli pipelines:*)",
-  ],
-  ask: ["Bash(elitea-cli agents chat:*)", "Bash(elitea-cli agents run:*)", "Bash(elitea-cli pipelines run:*)"],
+  allow: READ_COMMANDS.flatMap((c) => (c === "agents" ? ["Bash(elitea-cli agents)"] : [`Bash(elitea-cli ${c})`, `Bash(elitea-cli ${c}:*)`])),
+  ask: ASK_COMMANDS.map((c) => `Bash(elitea-cli ${c}:*)`),
 };

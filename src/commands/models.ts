@@ -1,14 +1,16 @@
+import { parseFormat, printData } from "../output.js";
 import { requireSession } from "../session.js";
 
 function k(n: number): string {
   return n >= 1000 ? `${Math.round(n / 1000)}k` : String(n);
 }
 
-export async function modelsCommand(opts: { json?: boolean }): Promise<void> {
+export async function modelsCommand(opts: { json?: boolean; output?: string }): Promise<void> {
+  const format = parseFormat(opts);
   const { client, projectId } = await requireSession();
   const catalog = await client.getModels(projectId);
-  if (opts.json) {
-    console.log(JSON.stringify(catalog, null, 2));
+  if (format !== "text") {
+    printData(format, catalog);
     return;
   }
   const width = Math.max(...catalog.items.map((m) => m.name.length), 4);

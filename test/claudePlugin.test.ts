@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { ELITEA_PERMISSIONS, pluginFiles, sessionContext, shimScript, writeClaudeTools } from "../src/integrations/claudePlugin.js";
+import { ELITEA_PERMISSIONS, READ_COMMANDS, pluginFiles, sessionContext, shimScript, writeClaudeTools } from "../src/integrations/claudePlugin.js";
 
 describe("claude plugin", () => {
   let home: string;
@@ -53,13 +53,24 @@ describe("claude plugin", () => {
     expect(skill).not.toContain("pipelines are not listed");
   });
 
-  it("runs read-only commands without a prompt and asks before any run", () => {
-    expect(ELITEA_PERMISSIONS.allow).toContain("Bash(elitea-cli pipelines:*)");
-    expect(ELITEA_PERMISSIONS.ask).toEqual([
-      "Bash(elitea-cli agents chat:*)",
-      "Bash(elitea-cli agents run:*)",
-      "Bash(elitea-cli pipelines run:*)",
-    ]);
+  it("runs only read commands without a prompt and asks before any run or change (AC-23)", () => {
+    const { allow, ask } = ELITEA_PERMISSIONS;
+    expect(allow).toContain("Bash(elitea-cli agents)");
+    expect(allow).toContain("Bash(elitea-cli agents list:*)");
+    expect(allow).toContain("Bash(elitea-cli pipelines get:*)");
+    expect(allow).toContain("Bash(elitea-cli env list:*)");
+    // No resource-wide prefix: `agents:*` would also allow agents delete/create/run.
+    for (const broad of ["agents", "pipelines", "toolkits", "credentials", "chats", "env", "config", "api"]) {
+      expect(allow).not.toContain(`Bash(elitea-cli ${broad}:*)`);
+    }
+    for (const cmd of ["agents run", "agents chat", "agents delete", "agents create", "pipelines run", "api", "env remove", "chats send"]) {
+      expect(ask).toContain(`Bash(elitea-cli ${cmd}:*)`);
+    }
+    // ask beats allow in Claude Code: no ask rule may cover a read command.
+    for (const rule of ask) {
+      const prefix = rule.slice("Bash(elitea-cli ".length, -":*)".length);
+      expect(READ_COMMANDS.filter((c) => c === prefix || c.startsWith(`${prefix} `))).toEqual([]);
+    }
   });
 
   it("shim quotes paths with single quotes", () => {

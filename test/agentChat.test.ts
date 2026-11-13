@@ -137,7 +137,9 @@ describe("AgentChat.start / waitFor", () => {
 describe("EliteaClient errors", () => {
   it("reports budget exhaustion and validation errors readably", async () => {
     const respond = (res: Response) => new EliteaClient("https://elitea.test", "tok", (async () => res) as unknown as typeof fetch);
-    await expect(respond(new Response("{}", { status: 429 })).listAgents(4)).rejects.toThrow(/budget/);
+    const budget = Response.json({ error: { message: "The budget has been reached.", type: "budget_exceeded", code: "project_budget_exceeded" } }, { status: 429 });
+    await expect(respond(budget).listAgents(4)).rejects.toThrow(/budget/);
+    await expect(respond(new Response("{}", { status: 429 })).listAgents(4)).rejects.not.toThrow(/budget/);
     const invalid = Response.json([{ loc: ["name"], msg: "String should have at most 50 characters" }], { status: 400 });
     const err = await respond(invalid).createConversation(4, { name: "x", agentId: 1 }).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(EliteaError);

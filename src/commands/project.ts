@@ -1,7 +1,8 @@
 import { search } from "@inquirer/prompts";
 import { updateEnvironment } from "../config.js";
-import { CliError } from "../errors.js";
+import { CliError, notFoundError } from "../errors.js";
 import { type EliteaClient, type EliteaProject, type EliteaUser, PUBLIC_PROJECT_ID, projectLabel, projectName } from "../elitea.js";
+import { parseFormat, printData } from "../output.js";
 import { isInteractive, requireSession } from "../session.js";
 
 /** Personal project first, then alphabetical; the shared public project is hidden. */
@@ -34,7 +35,7 @@ export async function chooseProject(
   if (opts.requested !== undefined) {
     const q = opts.requested.trim();
     const match = projects.find((p) => String(p.id) === q) ?? projects.find((p) => p.name.toLowerCase() === q.toLowerCase());
-    if (!match) throw new Error(`Project "${q}" not found among your ${projects.length} projects — run \`elitea-cli projects\``);
+    if (!match) throw notFoundError(`Project "${q}" not found among your ${projects.length} projects — run \`elitea-cli projects\``);
     return match;
   }
   if (!isInteractive() || projects.length <= 1) return personal;
@@ -64,12 +65,13 @@ export async function projectCommand(id: string | undefined): Promise<void> {
   console.log(`Project set to ${projectLabel(project, user)}`);
 }
 
-export async function projectsCommand(opts: { json?: boolean }): Promise<void> {
+export async function projectsCommand(opts: { json?: boolean; output?: string }): Promise<void> {
+  const format = parseFormat(opts);
   const session = await requireSession();
   const user = await session.client.getUser();
   const projects = sortProjects(await session.client.listProjects(user.personal_project_id), user);
-  if (opts.json) {
-    console.log(JSON.stringify(projects, null, 2));
+  if (format !== "text") {
+    printData(format, projects);
     return;
   }
   for (const p of projects) {
