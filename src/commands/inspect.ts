@@ -82,7 +82,7 @@ async function loadAgent(kind: ItemKind, query: string, project: string | undefi
 /** `agents get` / `pipelines get`. */
 export async function getCommand(kind: ItemKind, query: string, opts: GetOptions): Promise<void> {
   if (opts.yamlOnly && (opts.output !== undefined || opts.json)) throw usageError("--yaml-only cannot be combined with --output");
-  const format = parseFormat(opts);
+  const format = parseFormat(opts, !opts.yamlOnly);
   const { client, projectId, details } = await loadAgent(kind, query, opts.project);
   const summary = resolveVersion(details, opts.agentVersion);
   const [version, skills] = await Promise.all([
@@ -125,7 +125,7 @@ export function formatVersions(details: EliteaAgentDetails, columns = 120): stri
 
 /** `agents versions` / `pipelines versions`. */
 export async function versionsCommand(kind: ItemKind, query: string, opts: { project?: string; output?: string; json?: boolean }): Promise<void> {
-  const format = parseFormat(opts);
+  const format = parseFormat(opts, true);
   const { details } = await loadAgent(kind, query, opts.project);
   if (format !== "text") {
     const defaultId = details.version_details?.id;

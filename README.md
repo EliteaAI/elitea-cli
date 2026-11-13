@@ -31,6 +31,10 @@ elitea-cli launch claude    # Claude Code
 | `elitea-cli pipelines versions <pipeline>` | List a pipeline's versions |
 | `elitea-cli pipelines run <pipeline> [input]` | Run a pipeline once and print its output |
 | `elitea-cli launch claude` | Start Claude Code wired to EliteA |
+| `elitea-cli api <METHOD> <path>` | Call any EliteA API endpoint with the stored token |
+| `elitea-cli config list\|get\|set\|unset` | Show and change CLI settings (output, color, timeout) |
+| `elitea-cli completion bash\|zsh\|fish\|powershell` | Print a shell completion script |
+| `elitea-cli version` | Print the elitea-cli and Node.js versions (`--version`: the version only) |
 
 Every command prints its options and examples with `--help`, e.g. `elitea-cli pipelines run --help`.
 
@@ -40,7 +44,25 @@ Every command prints its options and examples with `--help`, e.g. `elitea-cli pi
 |---|---|
 | `--env <name>` | Run this one command against another saved environment (see [Environments](#environments)) |
 | `-p, --project <id\|name>` | Use this project instead of the active one, without switching |
-| `-o, --output <format>` | `text` (default), `json` or `yaml`. `--json` is the same as `-o json` |
+| `-o, --output <format>` | `table` (default), `json` or `yaml`. `--json` is the same as `-o json` |
+| `-q, --quiet` | Print only the primary id, for `$(…)`: the conversation id of `run --no-wait`, the new or deleted id |
+| `--yes` | Don't ask before deleting, removing or overwriting (required outside a terminal) |
+| `--no-color` | No ANSI colours (also `NO_COLOR=1` or `config set color never`) |
+| `--debug` | Log every request as `METHOD path → status (ms)` and the stack of a failure to stderr. Tokens, passwords, secrets and keys are masked as `****` |
+
+Global options (`-q`, `--yes`, `--no-color`, `--debug`, `--env`) may come before or after the command.
+
+**stdout holds only the result** (the table, the JSON document, the answer). Progress, spinners,
+hints and warnings go to stderr, and no spinner is drawn when stdout is not a terminal. With
+`-o json` (or `--json`) an error is printed to stderr as one JSON line and stdout stays empty:
+
+```json
+{"error":{"status":403,"code":"TOKEN_SCOPE_OPERATION","message":"This token is not allowed to do this (TOKEN_SCOPE_OPERATION). …","exit":4}}
+```
+
+The default of `-o` for `agents get|versions`, `pipelines list|get|versions|run`, `agents run`
+and `config list` is `ELITEA_CLI_OUTPUT`, then `config set output …`, then `table`. `projects`,
+`models`, `agents [list]`, `agents chat` and `status` keep their text output unless `-o` is given.
 
 ### Naming an agent or pipeline
 
@@ -183,7 +205,7 @@ elitea-cli agents run 42 "Hi" -o json | jq -r .answer
 | `[message]` / `-f, --file <path>` | The input: as an argument, from a file, or from stdin with `-f -`. Required, must not be empty |
 | `--agent-version <name\|id>` | Version to run (default: the default version) |
 | `--var <key=value>` | Set a variable of the version for this run only. Repeatable. Unknown names exit 2 and list the version's variables |
-| `--timeout <minutes>` | Stop waiting after this long, 1–240 (default: `settings.timeout` in the config, else 30). The run itself goes on |
+| `--timeout <minutes>` | Stop waiting after this long, 1–240 (default: `ELITEA_CLI_TIMEOUT`, then `config set timeout`, else 30). The run itself goes on |
 | `--no-wait` | Return as soon as EliteA accepts the message: prints the conversation id (exit 0) |
 | `-o json\|yaml` | `{status, answer, conversation_id, conversation_url, agent, version}` |
 
@@ -301,23 +323,96 @@ id=$(elitea-cli agents run 42 "Nightly report" --no-wait)   # returns at once
 | `timeout` | `--timeout` passed; the run goes on on EliteA | 8 |
 | `waiting_for_input` | The agent waits for a human approval (or an MCP login) in EliteA | 8 |
 
-The timeout defaults to `settings.timeout` in `~/.elitea-cli/config.json`, else 30 minutes.
+The timeout defaults to `ELITEA_CLI_TIMEOUT`, then `config set timeout …`, else 30 minutes.
 Stopping to wait (timeout, approval, Ctrl-C) never cancels the run on EliteA: open
 `conversation_url` to see how it ends.
 
 ### Exit codes
 
+Every command (except `status` and `launch`, below) ends with one of these:
+
 | Exit code | |
 |---|---|
-| 0 | Done (or accepted, with `--no-wait`) |
-| 1 | The run failed, or another error |
-| 2 | Bad usage: missing or empty input, bad option value, unknown `--var` |
-| 3 | Not logged in, or the token was rejected |
-| 4 | Access denied (your role or token lacks the permission) |
-| 5 | Unknown or ambiguous agent, pipeline, version or environment; an agent given to `pipelines …` |
-| 6 | Conflict, or EliteA refused the input (e.g. too large) |
+| 0 | Success (or accepted, with `--no-wait`) |
+| 1 | Any other error: the run failed, EliteA unreachable or busy (503), an unexpected server error |
+| 2 | Usage: unknown flag, missing argument, bad value, confirmation or terminal needed outside a terminal |
+| 3 | Not logged in, or the token was rejected or expired |
+| 4 | Forbidden (403): your role or the token's scope doesn't allow this |
+| 5 | Not found (404), or a name (agent, pipeline, version, project, environment) that matches nothing or several |
+| 6 | Validation or conflict (400, 409, 422): each field error is printed as `<field>: <message>` |
+| 7 | A limit or budget was reached (429); `Retry after N s` when EliteA says when |
 | 8 | Still running, or waiting for input, on EliteA |
-| 130 | Ctrl-C (stopped waiting; the run goes on) |
+| 130 | Ctrl-C |
+
+`status` exits 1 in every not-logged-in state; `launch` exits with the coding agent's exit code.
+
+### Errors
+
+| EliteA answers | elitea-cli prints |
+|---|---|
+| 403 | `Forbidden: <EliteA's message>` and `The token may lack permissions, or your role in project <id> does not allow this` |
+| 403 `TOKEN_SCOPE_*` (scoped token) | `This token is not allowed to do this (<code>). Create a token with the '<build\|run>' operation for project <id>` |
+| 429 | EliteA's own text (budget, run cap…) and `Retry after N s`; "budget … exhausted" only for a budget limit |
+| 400 / 409 / 422 | One `<field>: <message>` line per field |
+| 503 | GET: retried once after `retry_after` (at most 30 s). POST/PUT/PATCH/DELETE: `EliteA is busy (503); nothing was retried — try again` |
+| no answer | `Cannot reach <url>: <reason>` |
+
+### Deleting and overwriting
+
+Commands that delete, remove, revoke or overwrite ask `<Action> <type> '<name>' (<id>)?` in a
+terminal; only `y`/`yes` continues. `--yes` skips the question. Outside a terminal without `--yes`
+they fail with exit 2 and change nothing. `-q` never skips the question.
+
+## Calling the API directly: `api`
+
+For anything that has no command yet. `api` calls the active environment with the stored token
+and prints the response as is (JSON pretty-printed).
+
+```sh
+elitea-cli api GET /api/v2/auth/user/
+elitea-cli api GET '/api/v2/elitea_core/applications/prompt_lib/{project}' -F limit=5 | jq '.rows[].name'
+elitea-cli api POST '/api/v2/elitea_core/conversations/prompt_lib/{project}' -f body.json
+echo '{"name":"x"}' | elitea-cli api PUT /api/v2/... -f -
+```
+
+| Option | Meaning |
+|---|---|
+| `-f, --file <path>` | Request body from a file; `-` reads stdin |
+| `-F, --field key=value` | Repeatable. GET/DELETE: query parameters; POST/PUT/PATCH: a JSON body. Numbers and `true`/`false`/`null` are typed |
+| `-H, --header 'Name: value'` | Extra header (repeatable). `Authorization` is refused |
+| `-i, --include` | Also print the status line and response headers (stderr) |
+| `-O, --output-file <path>` | Write the response body to a file |
+| `-p, --project <id\|name>` | The project `{project}` stands for (default: the active one) |
+
+`<path>` starts with `/`; a full URL is accepted only on the environment's own origin, so the token
+is never sent anywhere else. Redirects are not followed. An error status prints EliteA's raw
+error body to stderr and exits with the code for that status (table above).
+
+## Settings: `config`
+
+```sh
+elitea-cli config list             # value and source of every setting
+elitea-cli config set output json  # default -o of list/get commands
+elitea-cli config set timeout 60   # minutes `run` waits
+elitea-cli config unset timeout
+```
+
+| Setting | Values | Default | Environment variable (wins) |
+|---|---|---|---|
+| `output` | `table`, `json`, `yaml` | `table` | `ELITEA_CLI_OUTPUT` |
+| `color` | `auto`, `never` | `auto` | `NO_COLOR` |
+| `timeout` | 1–240 (minutes) | 30 | `ELITEA_CLI_TIMEOUT` |
+
+Settings apply to all environments. An unknown key or value exits 2 and lists the allowed values.
+
+## Shell completion
+
+```sh
+elitea-cli completion zsh > "${fpath[1]}/_elitea-cli"                               # zsh, then restart the shell
+elitea-cli completion bash > ~/.local/share/bash-completion/completions/elitea-cli  # bash
+elitea-cli completion fish > ~/.config/fish/completions/elitea-cli.fish            # fish
+elitea-cli completion powershell >> $PROFILE                                         # PowerShell
+```
 
 ## Launching Claude Code
 
@@ -378,7 +473,7 @@ project and can run your EliteA agents:
 > /elitea:chat "Attach 2" and now check the tests too
 ```
 
-Claude runs `elitea-cli agents --json`, `elitea-cli agents chat <agent> "<message>" --json` and
+Claude runs `elitea-cli agents list --json`, `elitea-cli agents chat <agent> "<message>" --json` and
 `elitea-cli pipelines run <pipeline> "<input>" -o json` through its Bash tool and reuses the conversation for follow-ups. The agent runs on EliteA and
 sees only the message Claude sends it (Claude includes the code it needs), not your files.
 
@@ -391,9 +486,12 @@ sees only the message Claude sends it (Claude includes the code it needs), not y
 What `launch` adds to the `claude` command line (nothing is written into `~/.claude`):
 - `--append-system-prompt`: server, user and active project;
 - `--plugin-dir ~/.elitea-cli/claude-plugin`: the `elitea` skill and the slash commands;
-- `--settings` permissions: `elitea-cli status/projects/models/agents/pipelines` run without a prompt;
-  `agents chat`, `agents run` and `pipelines run` always ask, because they run a remote agent,
-  spend budget and the agent may have write tools;
+- `--settings` permissions: only read commands run without a prompt (`status`, `projects`,
+  `models`, `agents` / `agents list|get|versions`, `pipelines list|get|versions|validate`,
+  `toolkits list|get|types|tools`, `credentials list|get|types`, `chats list|show`, `env list`).
+  Every other `elitea-cli` command asks: running or chatting with an agent (budget, write tools),
+  creating, changing or deleting anything, `api`, `login`, `env`/`config` changes. There is no
+  `agents:*`-style prefix, so a new verb such as `agents delete` can never run unasked;
 - `PATH`: `~/.elitea-cli/bin/elitea-cli`, a shim that runs the same elitea-cli build. The token is
   not passed; the shim reads it from the store. `ELITEA_CLI_ENV` names the launch's environment,
   so Claude's calls go to the same server.
@@ -408,6 +506,10 @@ What `launch` adds to the `claude` command line (nothing is written into `~/.cla
 | `ELITEA_CLI_PROJECT` | Override the project id of the selected environment |
 | `ELITEA_CLI_HOME` | Config directory (default `~/.elitea-cli`) |
 | `ELITEA_CLI_NO_KEYCHAIN` | Store the token in a file instead of the keychain |
+| `ELITEA_CLI_OUTPUT` | Default `-o` of list/get commands (`table`, `json`, `yaml`) |
+| `ELITEA_CLI_TIMEOUT` | Minutes `run` waits (1–240) |
+| `NO_COLOR` | No ANSI colours |
+| `ELITEA_CLI_DEBUG` | Same as `--debug` |
 
 ## Development
 

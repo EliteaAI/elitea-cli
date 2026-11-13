@@ -79,7 +79,8 @@ async function tagIds(client: EliteaClient, projectId: number, names: string[] |
 
 /** `agents [list]` (kind agent: all applications, --type narrows) and `pipelines list`. */
 export async function listCommand(kind: ItemKind, opts: AgentsOptions): Promise<void> {
-  const format = parseFormat(opts);
+  // `agents [list]` predates settings.output and keeps its text default (AC-6a, AC-22).
+  const format = parseFormat(opts, kind === "pipeline");
   const type = kind === "pipeline" ? "pipeline" : parseType(opts.type);
   const statuses = parseStatuses(opts.status);
   const maxTotal = parseLimit(opts.limit);

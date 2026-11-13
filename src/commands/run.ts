@@ -3,7 +3,9 @@ import { AgentChat, conversationUrl, type RunResult } from "../agentChat.js";
 import { loadConfig } from "../config.js";
 import type { AgentVariable, EliteaAgent } from "../elitea.js";
 import { EXIT, usageError } from "../errors.js";
-import { type OutputFormat, parseFormat, printData } from "../output.js";
+import { readStdin } from "../interaction.js";
+import { type OutputFormat, parseFormat, printData, printQuiet } from "../output.js";
+import { TIMEOUT_RANGE } from "./settings.js";
 import { type ItemKind, isPipeline, resolveAgent, resolveVersion } from "../resolve.js";
 import { projectSession, withSpinner } from "./common.js";
 
@@ -17,24 +19,20 @@ export interface RunOptions {
   output?: string;
 }
 
-export const TIMEOUT_RANGE = { min: 1, max: 240, fallback: 30 } as const;
+export { TIMEOUT_RANGE };
 
-/** Minutes: the flag, else `settings.timeout` in the config, else 30. Out of range exits 2. */
+/** Minutes: the flag, else ELITEA_CLI_TIMEOUT, else `settings.timeout` in the config, else 30. Out of range exits 2. */
 export function parseTimeout(flag: string | undefined, configured: unknown): number {
-  const raw = flag ?? (configured === undefined || configured === null ? undefined : String(configured));
+  const env = process.env.ELITEA_CLI_TIMEOUT || undefined;
+  const stored = configured === undefined || configured === null ? undefined : String(configured);
+  const raw = flag ?? env ?? stored;
   if (raw === undefined) return TIMEOUT_RANGE.fallback;
   const n = Number(raw);
   if (!Number.isInteger(n) || n < TIMEOUT_RANGE.min || n > TIMEOUT_RANGE.max) {
-    const source = flag === undefined ? "settings.timeout in the config" : "--timeout";
+    const source = flag !== undefined ? "--timeout" : env !== undefined ? "ELITEA_CLI_TIMEOUT" : "settings.timeout in the config";
     throw usageError(`${source} must be a whole number of minutes from ${TIMEOUT_RANGE.min} to ${TIMEOUT_RANGE.max}, got "${raw}"`);
   }
   return n;
-}
-
-async function readStdin(): Promise<string> {
-  const chunks: Buffer[] = [];
-  for await (const chunk of process.stdin) chunks.push(Buffer.from(chunk as Buffer));
-  return Buffer.concat(chunks).toString("utf8");
 }
 
 /** The message: the argument, or `-f file` / `-f -` (stdin). */
@@ -44,7 +42,7 @@ export async function readInput(
   file: string | undefined,
   read: { file: (p: string) => Promise<string>; stdin: () => Promise<string> } = {
     file: (p) => readFile(p, "utf8"),
-    stdin: readStdin,
+    stdin: () => readStdin("-f -"),
   },
 ): Promise<string> {
   if (message !== undefined && file !== undefined) throw usageError("Give the input as an argument or with -f, not both");
@@ -105,6 +103,8 @@ const EXIT_BY_STATUS: Record<RunStatusOut, number> = {
 /** Print the outcome; returns the exit code. Notes for people go to stderr in every format. */
 export function report(format: OutputFormat, r: RunReport, error?: string): number {
   const url = r.conversation_url;
+  // -q: the conversation id with --no-wait (AC-5); a finished run still prints its answer.
+  if (r.status === "running" && printQuiet(r.conversation_id)) return EXIT_BY_STATUS.running;
   if (format === "text") {
     if (r.status === "finished") console.log(r.answer ?? "");
     if (r.status === "running") console.log(String(r.conversation_id));
@@ -125,7 +125,7 @@ export function report(format: OutputFormat, r: RunReport, error?: string): numb
 
 /** `agents run` / `pipelines run`: one message in a new private conversation, for scripts and CI. */
 export async function runCommand(kind: ItemKind, query: string, message: string | undefined, opts: RunOptions): Promise<number> {
-  const format = parseFormat(opts);
+  const format = parseFormat(opts, true);
   const timeoutMin = parseTimeout(opts.timeout, (await loadConfig()).settings.timeout);
   const text = await readInput(kind, message, opts.file);
 
