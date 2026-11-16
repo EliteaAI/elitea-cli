@@ -32,10 +32,13 @@ const SKILL = `---
 name: elitea
 description: >-
   Use for anything about EliteA: the current EliteA project, user or server; listing EliteA
-  projects, agents or pipelines; showing an agent's configuration; and running an EliteA agent
-  or pipeline and using its answer.
+  projects, agents or pipelines; showing an agent's configuration; running an EliteA agent
+  or pipeline and using its answer; and creating, changing, versioning, validating or deleting
+  EliteA agents and pipelines (from files or on request).
   Triggers: "which project are we in", "what agents do we have", "ask the … agent",
-  "let the … agent do …", "run the … pipeline", "EliteA", "my project".
+  "let the … agent do …", "run the … pipeline", "create an agent", "change the … agent's
+  instructions/model", "new version of …", "validate this pipeline", "delete the … agent",
+  "EliteA", "my project".
 ---
 
 # EliteA via elitea-cli
@@ -93,6 +96,42 @@ Returns \`{"status": "finished", "answer": "…", "conversation_id": 123, "conve
 \`status\` is \`finished\`, \`failed\` (answer = the failure text, exit 1), \`timeout\` or
 \`waiting_for_input\` (exit 8: it goes on on EliteA, give the user \`conversation_url\`). For long
 input use \`-f -\` with a quoted heredoc on stdin. Use a Bash timeout of 600000 ms.
+
+## Creating and changing agents and pipelines
+
+Only when the user asks for it. Files use EliteA's own JSON shape (YAML is the same structure).
+Write them to a temporary file (outside the repo, unless the user keeps agents in the repo) and
+pass the path. All these commands print a short sentence; add \`-o json\` for the object, \`-q\` for
+the id only. Each one asks the user for permission when you run it: that is expected.
+
+- **Create**: \`elitea-cli agents create -f <file>\` with at least
+  \`{"name": "…", "instructions": "…", "llm_settings": {}}\` (\`{}\` = the project's default model; a
+  \`model_name\` must come from \`elitea-cli models --json\`). Optional: \`description\`,
+  \`welcome_message\`, \`conversation_starters\` (list of strings), \`variables\` (\`[{name, value}]\`).
+  Pipeline: \`elitea-cli pipelines create --name "<name>" --yaml <pipeline.yaml>\`.
+  A name that already exists still creates a second item (a note says so): check
+  \`agents list --search\` first and ask the user if one exists.
+- **Change a version**: never use \`edit\` (it opens an editor and needs a terminal). Instead:
+  \`elitea-cli agents get <agent> -o yaml > <file>\`, change only the fields the user asked for,
+  then \`elitea-cli agents update <agent> -f <file> --dry-run\`, show the user the diff, and run it
+  again without \`--dry-run\`. A file with only the changed fields works too: fields left out keep
+  their value. \`--agent-version <name|id>\` targets a version other than the default one.
+  Pipeline YAML only: \`elitea-cli pipelines update <pipeline> --yaml <file>\`.
+  \`update\` never changes toolkits (\`tools\`); say so if the user asks for that.
+- **Published version** ("can not be updated"): create a new version and change that one.
+- **Versions**: \`elitea-cli agents version create <agent> <new name> [--from <version>]\` copies a
+  version; \`elitea-cli agents version default <agent> <version>\` makes it the default.
+- **Validate pipeline YAML** before creating or updating a pipeline:
+  \`elitea-cli pipelines validate -f <file> -o json\` → \`{valid, errors[], warnings[]}\`. Fix every
+  error; warnings may stay. It saves nothing.
+- **Delete**: only after the user confirmed this exact item in the conversation. Name the item
+  (name and id; for a version, which one) and ask first. Then run
+  \`elitea-cli agents delete <id> --yes\`, or \`--agent-version <name> --yes\` for one version.
+  Without \`--yes\` it fails here, as there is no terminal. Deleting a version disables its schedules.
+- \`pipelines …\` take the same commands and refuse a classic agent; \`agents …\` accept both.
+- Exit 6 = EliteA refused the change: show its message. "Version is in use" → ask the user which
+  version should take over and pass \`--replace-with <version>\`. "was changed on the server" →
+  someone else saved it: get it again and redo the change.
 
 ## Using the answer
 
@@ -189,7 +228,7 @@ export function sessionContext(opts: { url: string; projectId: number; projectNa
     `You are running inside elitea-cli, connected to EliteA (${opts.url}).`,
     `${opts.userName ? `User: ${opts.userName}. ` : ""}Active EliteA project: ${project}.`,
     "The user's EliteA agents and pipelines live in this project and run on the EliteA server.",
-    "Use the `elitea` skill (the `elitea-cli` command) for anything about EliteA projects, agents or pipelines, or running them.",
+    "Use the `elitea` skill (the `elitea-cli` command) for anything about EliteA projects, agents or pipelines: running, creating, changing or deleting them.",
   ].join("\n");
 }
 

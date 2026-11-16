@@ -5,6 +5,15 @@ import { configGetCommand, configListCommand, configSetCommand, configUnsetComma
 import { loadConfig } from "./config.js";
 import { ctx, isDebug, operationFor } from "./context.js";
 import { agentChatCommand } from "./commands/agentChat.js";
+import {
+  createCommand,
+  deleteCommand,
+  editCommand,
+  updateCommand,
+  validateCommand,
+  versionCreateCommand,
+  versionDefaultCommand,
+} from "./commands/authoring.js";
 import { listCommand, STATUSES } from "./commands/agents.js";
 import { collect } from "./commands/common.js";
 import { getCommand, versionsCommand } from "./commands/inspect.js";
@@ -218,13 +227,104 @@ function runOptions(cmd: Command): Command {
     .option("-o, --output <format>", `${OUTPUT_HELP}; json/yaml: {status, answer, conversation_id, conversation_url, agent, version}`);
 }
 
+const WRITE_OUTPUT_HELP = "text, json or yaml (the object EliteA returns)";
+
+/** create, update, edit, version create|default and delete under `agents` and `pipelines` (story 04). */
+function authoringCommands(parent: Command, kind: ItemKind): void {
+  const noun = kind;
+  const plural = `${kind}s`;
+  const common = (cmd: Command) => cmd.addOption(envOption()).option("-p, --project <id|name>", PROJECT_HELP);
+
+  const create = common(parent.command("create").description(`Create ${kind === "agent" ? "an agent" : "a pipeline"} from a JSON or YAML file`))
+    .option("-f, --file <path>", `the ${noun} as EliteA's create body ({name, description, versions} or {name, instructions, llm_settings, …}); - reads stdin`)
+    .option("-o, --output <format>", WRITE_OUTPUT_HELP);
+  if (kind === "pipeline") {
+    create
+      .option("--name <name>", "pipeline name (with --yaml, instead of -f)")
+      .option("--yaml <path>", "the pipeline YAML (with --name)")
+      .option("--model <name>", "model (default: the project's default model)")
+      .option("--description <text>", "pipeline description");
+  }
+  create
+    .addHelpText(
+      "after",
+      kind === "agent"
+        ? "\nA file without `versions` gets one base version from its top-level instructions, llm_settings, agent_type….\n\nExamples:\n  elitea-cli agents create -f examples/agent.yaml\n  id=$(elitea-cli agents create -f reviewer.json -q)"
+        : "\nExamples:\n  elitea-cli pipelines create --name \"Release notes\" --yaml release-notes.yaml\n  elitea-cli pipelines create -f examples/pipeline.yaml",
+    )
+    .action((opts) => createCommand(kind, opts));
+
+  const update = common(
+    parent
+      .command("update")
+      .argument(`<${noun}>`, `${noun} id or name`)
+      .description(kind === "agent" ? "Change a version from a file (fields left out keep their value)" : "Change a version from a file, or only its YAML"),
+  )
+    .option("-f, --file <path>", `version file, as \`${plural} get -o json\` prints it; - reads stdin`)
+    .option("--agent-version <name|id>", "version to change (default: the default version)")
+    .option("--dry-run", "print a diff of what would change and send nothing")
+    .option("-o, --output <format>", WRITE_OUTPUT_HELP);
+  if (kind === "pipeline") update.option("--yaml <path>", "the pipeline YAML only");
+  update
+    .addHelpText(
+      "after",
+      `\nExamples:\n  elitea-cli ${plural} get 42 -o yaml > v.yaml   # edit v.yaml\n  elitea-cli ${plural} update 42 -f v.yaml --dry-run\n  elitea-cli ${plural} update 42 -f v.yaml` +
+        (kind === "pipeline" ? "\n  elitea-cli pipelines update \"Release notes\" --yaml release-notes.yaml" : ""),
+    )
+    .action((query: string, opts) => updateCommand(kind, query, opts));
+
+  common(
+    parent
+      .command("edit")
+      .argument(`<${noun}>`, `${noun} id or name`)
+      .description(kind === "agent" ? "Edit a version as YAML in $VISUAL / $EDITOR" : "Edit a version's pipeline YAML in $VISUAL / $EDITOR"),
+  )
+    .option("--agent-version <name|id>", "version to edit (default: the default version)")
+    .option("-o, --output <format>", WRITE_OUTPUT_HELP)
+    .action((query: string, opts) => editCommand(kind, query, opts));
+
+  const version = parent.command("version").description(`Create a version of ${kind === "agent" ? "an agent" : "a pipeline"} or set the default one`);
+  common(
+    version
+      .command("create")
+      .argument(`<${noun}>`, `${noun} id or name`)
+      .argument("<name>", "name of the new version")
+      .description("Create a version as a copy of another one"),
+  )
+    .option("--from <name|id>", "version to copy (default: the default version)")
+    .option("-o, --output <format>", WRITE_OUTPUT_HELP)
+    .addHelpText("after", `\nExample:\n  elitea-cli ${plural} version create 42 v2 --from base`)
+    .action((query: string, name: string, opts) => versionCreateCommand(kind, query, name, opts));
+  common(
+    version
+      .command("default")
+      .argument(`<${noun}>`, `${noun} id or name`)
+      .argument("<version>", "version name or id")
+      .description("Make a version the default one"),
+  )
+    .option("-o, --output <format>", WRITE_OUTPUT_HELP)
+    .action((query: string, name: string, opts) => versionDefaultCommand(kind, query, name, opts));
+
+  common(
+    parent
+      .command("delete")
+      .argument(`<${noun}>`, `${noun} id or name`)
+      .description(`Delete ${kind === "agent" ? "an agent" : "a pipeline"} with all its versions, or one version`),
+  )
+    .option("--agent-version <name|id>", "delete only this version (its schedules are disabled)")
+    .option("--replace-with <name|id>", "move agents and pipelines that use the version to this one first")
+    .option("-y, --yes", "don't ask for confirmation")
+    .addHelpText("after", `\nExamples:\n  elitea-cli ${plural} delete 42\n  elitea-cli ${plural} delete 42 --agent-version v1 --replace-with v2 --yes`)
+    .action((query: string, opts) => deleteCommand(kind, query, opts));
+}
+
 const RUN_EXIT_HELP = `
 Exit codes: 0 finished (or accepted with --no-wait), 1 the run failed, 2 bad usage,
 3 not logged in, 4 forbidden, 5 unknown name, 7 limit or budget, 8 still running or waiting
 for input (the run goes on on EliteA), 130 Ctrl-C (stopped waiting; the run goes on).`;
 
 const agents = listOptions(
-  program.command("agents").description("List, inspect and run EliteA agents and pipelines (no subcommand: list)"),
+  program.command("agents").description("List, inspect, run, create, change and delete EliteA agents and pipelines (no subcommand: list)"),
   "agent",
 )
   .enablePositionalOptions()
@@ -249,6 +349,8 @@ getOptions(agents.command("get").argument("<agent>", "agent id or name").descrip
 
 versionsOptions(agents.command("versions").argument("<agent>", "agent id or name").description("List the versions of an agent"))
   .action((query: string, opts) => versionsCommand("agent", query, opts));
+
+authoringCommands(agents, "agent");
 
 runOptions(
   agents
@@ -277,7 +379,7 @@ agents
 
 const pipelines = program
   .command("pipelines")
-  .description("List, inspect and run EliteA pipelines")
+  .description("List, inspect, run, create, change, validate and delete EliteA pipelines")
   .addOption(envOption())
   .enablePositionalOptions();
 
@@ -291,6 +393,21 @@ getOptions(pipelines.command("get").argument("<pipeline>", "pipeline id or name"
 
 versionsOptions(pipelines.command("versions").argument("<pipeline>", "pipeline id or name").description("List the versions of a pipeline"))
   .action((query: string, opts) => versionsCommand("pipeline", query, opts));
+
+authoringCommands(pipelines, "pipeline");
+
+pipelines
+  .command("validate")
+  .description("Check pipeline YAML on EliteA without saving it (exit 0 valid, 6 not valid)")
+  .addOption(envOption())
+  .option("-f, --file <path>", "the pipeline YAML; - reads stdin")
+  .option("--yaml <path>", "same as -f")
+  .option("-p, --project <id|name>", PROJECT_HELP)
+  .option("-o, --output <format>", "text or json (the platform's {valid, errors, warnings})")
+  .addHelpText("after", "\nExample:\n  elitea-cli pipelines validate -f release-notes.yaml")
+  .action(async (opts) => {
+    process.exitCode = await validateCommand(opts);
+  });
 
 runOptions(
   pipelines

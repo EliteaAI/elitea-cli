@@ -1,5 +1,6 @@
 import { ctx, isDebug } from "./context.js";
-import { BUSY_MESSAGE, httpErrorMessage, parseErrorBody } from "./platformError.js";
+import { BUSY_MESSAGE, httpErrorMessage, parseErrorBody, platformText } from "./platformError.js";
+
 import { redactBody, redactPath, scrub } from "./redact.js";
 
 export interface EliteaUser {
@@ -73,12 +74,33 @@ export interface AgentVersion {
   agent_type?: string;
   instructions?: string | null;
   llm_settings?: { model_name?: string | null } | null;
-  tools?: Array<{ name?: string; type?: string; toolkit_name?: string }> | null;
+  tools?: Array<{ id?: number; name?: string; type?: string; toolkit_name?: string; settings?: unknown }> | null;
+  /** sha256 of `instructions`, for read-before-write checks. */
+  instructions_sha256?: string;
   variables?: AgentVariable[] | null;
   conversation_starters?: unknown[] | null;
   welcome_message?: string | null;
   tags?: Array<{ name: string }> | null;
   [key: string]: unknown;
+}
+
+/** POST applications: the application, its versions and the created base version in full. */
+export interface CreatedApplication extends EliteaAgentDetails {
+  version_details: AgentVersion;
+}
+
+export interface PipelineIssue {
+  code: string;
+  node_id?: string | null;
+  field?: string | null;
+  message: string;
+  severity: "error" | "warning";
+}
+
+export interface PipelineValidation {
+  valid: boolean;
+  errors: PipelineIssue[];
+  warnings: PipelineIssue[];
 }
 
 export interface EliteaTag {
@@ -131,6 +153,8 @@ export class EliteaError extends Error {
     readonly status: number,
     /** The platform's error code (`TOKEN_SCOPE_PROJECT`, `project_budget_exceeded`, …). */
     readonly code?: string,
+    /** What the platform said, unformatted: its text and its field errors. */
+    readonly platform?: { text?: string; fields: string[] },
   ) {
     super(message);
     this.name = "EliteaError";
@@ -256,7 +280,7 @@ export class EliteaClient {
     }
     const message = httpErrorMessage(res.status, bare, err, { projectId: ctx.projectId, operation: ctx.operation });
     if (res.status === 403) throw new AccessDeniedError(message, err.code);
-    throw new EliteaError(message, res.status, err.code);
+    throw new EliteaError(message, res.status, err.code, { text: platformText(err), fields: err.fields });
   }
 
   getUser(): Promise<EliteaUser> {
@@ -310,6 +334,46 @@ export class EliteaClient {
   /** Full configuration of one version (instructions, model, tools, variables…). */
   getVersion(projectId: number, agentId: number, versionId: number): Promise<AgentVersion> {
     return this.get<AgentVersion>(`/api/v2/elitea_core/version/prompt_lib/${projectId}/${agentId}/${versionId}`);
+  }
+
+  /** New agent or pipeline with its `base` version (exactly one version, named base). */
+  createApplication(projectId: number, body: Record<string, unknown>): Promise<CreatedApplication> {
+    return this.request<CreatedApplication>("POST", `/api/v2/elitea_core/applications/prompt_lib/${projectId}`, { body });
+  }
+
+  /** Change one version; fields left out of `body` keep their value. `name` is required. 201 → the version. */
+  updateVersion(projectId: number, agentId: number, versionId: number, body: Record<string, unknown>): Promise<AgentVersion> {
+    return this.request<AgentVersion>("PUT", `/api/v2/elitea_core/version/prompt_lib/${projectId}/${agentId}/${versionId}`, { body });
+  }
+
+  /** New version from a full version body; `copy_skills_from_version_id` copies that version's skills. */
+  createVersion(projectId: number, agentId: number, body: Record<string, unknown>): Promise<AgentVersion> {
+    return this.request<AgentVersion>("POST", `/api/v2/elitea_core/versions/prompt_lib/${projectId}/${agentId}`, { body });
+  }
+
+  setDefaultVersion(projectId: number, agentId: number, versionId: number): Promise<EliteaAgentDetails> {
+    return this.request<EliteaAgentDetails>("PATCH", `/api/v2/elitea_core/default_version/prompt_lib/${projectId}/${agentId}`, {
+      body: { version_id: versionId },
+    });
+  }
+
+  /** The agent or pipeline with all its versions (204). */
+  async deleteApplication(projectId: number, agentId: number): Promise<void> {
+    await this.request("DELETE", `/api/v2/elitea_core/application/prompt_lib/${projectId}/${agentId}`);
+  }
+
+  /** One version; a version other agents use needs `replacementVersionId` to move them first. */
+  async deleteVersion(projectId: number, agentId: number, versionId: number, replacementVersionId?: number): Promise<void> {
+    await this.request("DELETE", `/api/v2/elitea_core/version/prompt_lib/${projectId}/${agentId}/${versionId}`, {
+      query: { replacement_version_id: replacementVersionId },
+    });
+  }
+
+  /** Check pipeline YAML without saving; HTTP 200 whether it is valid or not. */
+  validatePipeline(projectId: number, yaml: string): Promise<PipelineValidation> {
+    return this.request<PipelineValidation>("POST", `/api/v2/elitea_core/validate_pipeline/prompt_lib/${projectId}`, {
+      body: { pipeline_yaml: yaml },
+    });
   }
 
   /** Skills attached to a version (they are not part of the version object). */

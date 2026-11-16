@@ -1,0 +1,14 @@
+# elitea-cli pipelines create -f examples/pipeline.yaml
+# `instructions` holds the pipeline YAML; `pipelines create` sets agent_type: pipeline.
+# Only the YAML: elitea-cli pipelines create --name "Release notes" --yaml release-notes.yaml
+name: Release notes
+description: Turns a list of changes into release notes
+llm_settings: {}            # the project's default model
+instructions: |
+  entry_point: draft
+  nodes:
+    - id: draft
+      type: llm
+      input: [messages]
+      output: [messages]
+      transition: END

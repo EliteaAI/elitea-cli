@@ -26,10 +26,17 @@ elitea-cli launch claude    # Claude Code
 | `elitea-cli agents versions <agent>` | List an agent's versions |
 | `elitea-cli agents run <agent> [message]` | Run an agent once and print its answer (scripts, CI) |
 | `elitea-cli agents chat [agent] [message]` | Chat with an agent (interactive, or one question and one answer) |
+| `elitea-cli agents create -f <file>` | Create an agent from a JSON or YAML file |
+| `elitea-cli agents update <agent> -f <file>` | Change a version from a file (`--dry-run`: show the diff) |
+| `elitea-cli agents edit <agent>` | Edit a version as YAML in your editor |
+| `elitea-cli agents version create\|default <agent> <name>` | Create a version as a copy, or set the default one |
+| `elitea-cli agents delete <agent>` | Delete an agent, or one version with `--agent-version` |
 | `elitea-cli pipelines list` | List pipelines only |
 | `elitea-cli pipelines get <pipeline>` | Show a pipeline's configuration and YAML |
 | `elitea-cli pipelines versions <pipeline>` | List a pipeline's versions |
 | `elitea-cli pipelines run <pipeline> [input]` | Run a pipeline once and print its output |
+| `elitea-cli pipelines create\|update\|edit\|version\|delete` | The same as for agents, on pipelines (and `--yaml` for the pipeline YAML only) |
+| `elitea-cli pipelines validate -f <file>` | Check pipeline YAML on EliteA without saving it |
 | `elitea-cli launch claude` | Start Claude Code wired to EliteA |
 | `elitea-cli api <METHOD> <path>` | Call any EliteA API endpoint with the stored token |
 | `elitea-cli config list\|get\|set\|unset` | Show and change CLI settings (output, color, timeout) |
@@ -290,6 +297,123 @@ elitea-cli pipelines run "Release notes" -f changes.md --var version=1.5 -o json
 
 Options: `-f`, `--agent-version`, `--var`, `--timeout`, `--no-wait`, `-p`, `-o`, the same as in
 [`agents run`](#agents-run-agent-message-run-once).
+
+## Agents and pipelines as files
+
+Keep agents and pipelines in Git, review changes as code, and apply them to an environment
+without the UI. Files use **EliteA's own JSON shape**; a YAML file is the same structure.
+Examples: [examples/agent.yaml](examples/agent.yaml), [examples/pipeline.yaml](examples/pipeline.yaml).
+
+Every command here except `pipelines validate` changes something: a viewer gets exit 4, and a
+scoped token needs the `build` operation. Editors and admins can run them, and so can the owner of a
+personal project.
+
+### `create`
+
+```sh
+elitea-cli agents create -f examples/agent.yaml
+elitea-cli agents create -f reviewer.json -q            # prints only the new id
+cat agent.yaml | elitea-cli agents create -f -
+elitea-cli pipelines create -f examples/pipeline.yaml
+elitea-cli pipelines create --name "Release notes" --yaml release-notes.yaml [--model gpt-5-mini] [--description "…"]
+```
+
+Prints `Created agent "<name>" (<id>), version base (<version id>)`; `-o json` prints the object EliteA
+returns. The file is sent as EliteA's create body. A file without `versions` gets one `base`
+version from its top-level `instructions`, `llm_settings`, `agent_type`, `tools`, `variables`, … so
+`{name, instructions, llm_settings}` is enough. Fields the file leaves out are not sent: EliteA's
+defaults apply (a classic agent; `pipelines create` sets `agent_type: pipeline`). `llm_settings` is
+required by EliteA; `{}` (or no `--model`) uses the project's default model.
+
+A file that is not valid JSON or YAML fails before anything is sent (`<file>: not valid JSON or YAML
+(line N: …)`, exit 2). EliteA's own refusals (two versions, a version not named `base`, broken
+pipeline YAML, too many conversation starters) are printed one per line, exit 6. A name already used
+by another agent or pipeline is allowed by EliteA: the item is created and a note goes to stderr.
+
+### `update`
+
+```sh
+elitea-cli agents get "Code reviewer" -o yaml > reviewer.yaml       # edit reviewer.yaml
+elitea-cli agents update "Code reviewer" -f reviewer.yaml --dry-run  # unified diff, nothing sent
+elitea-cli agents update "Code reviewer" -f reviewer.yaml
+elitea-cli agents update 42 -f v2.yaml --agent-version v2
+elitea-cli pipelines update "Release notes" --yaml release-notes.yaml   # only the pipeline YAML
+```
+
+Changes one version (`--agent-version`, default: the default version) and prints
+`Updated <name>/<version>`. The file is what `get -o json|yaml` prints; the server's fields in it
+(`id`, `author`, `created_at`, `status`, `instructions_sha256`, `cli`, …) are ignored. Only the
+fields that differ from the version are sent, and **fields the file leaves out keep their value**.
+A file never renames a version.
+
+- **Toolkits are not changed by `update`** (EliteA attaches them separately). A `tools` list that
+  differs from the attached toolkits prints `The file changes the attached toolkits (<now> → <file>);
+  update does not change toolkits` on stderr; use `agents toolkits add|remove`.
+- A published version can't be changed: EliteA's text and `Create a new version with
+  elitea-cli agents version create`, exit 6.
+- Before saving, the version is read again. If someone saved it since (its instructions changed),
+  you are asked `… was changed on the server since you opened it. Overwrite?`. Outside a terminal,
+  or on no, nothing is sent (exit 6); `--yes` overwrites.
+
+### `edit`
+
+```sh
+elitea-cli agents edit "Code reviewer"            # the version as YAML
+elitea-cli pipelines edit "Release notes"         # only the pipeline YAML
+```
+
+Opens the version in `$VISUAL`, else `$EDITOR`, else `vi` (`notepad` on Windows). Saving and closing
+sends the change; closing without a change prints `No changes`. The file is created with mode 0600 in
+the OS temp folder and deleted afterwards. For pipelines the YAML is checked with
+`pipelines validate` first: errors block the save, warnings don't. When EliteA refuses the change you
+are asked `Edit again?`; on no, your edits stay in the temp file, whose path is printed (exit 6).
+
+`edit` needs a terminal; in scripts use `update -f`. An editor that exits non-zero saves nothing
+(exit 1); a file saved empty saves nothing (exit 2).
+
+### `version create` / `version default`
+
+```sh
+elitea-cli agents version create "Code reviewer" v2              # copy of the default version
+elitea-cli agents version create "Code reviewer" v3 --from v2 -q # prints only the new version id
+elitea-cli agents version default "Code reviewer" v2             # `agents versions` marks it *
+```
+
+The new version is a copy of `--from` (default: the default version): instructions, model,
+variables, toolkits and skills. A name the item already has exits 6.
+
+### `delete`
+
+```sh
+elitea-cli agents delete "Code reviewer"                         # the agent and all its versions
+elitea-cli agents delete "Code reviewer" --agent-version v1      # one version
+elitea-cli agents delete 42 --agent-version v1 --replace-with v2 --yes
+```
+
+Asks for confirmation (see [Deleting and overwriting](#deleting-and-overwriting)). Deleting a version
+also disables its schedules. EliteA refuses to delete the default version, the `base` version and
+published versions. It also refuses a version other agents or pipelines use, and the CLI then adds
+`Pass --replace-with <version> to move them to another version first`. A whole agent with a published
+version is refused too ("Unpublish first"); otherwise it is deleted with its webhooks, even when other
+agents use it. `pipelines delete` refuses a classic agent.
+
+### `pipelines validate`
+
+```sh
+elitea-cli pipelines validate -f release-notes.yaml
+elitea-cli pipelines validate -f release-notes.yaml -o json      # EliteA's {valid, errors, warnings}
+```
+
+Nothing is saved, and viewers may run it. Prints one line per problem, then `Valid` or
+`N error(s), M warning(s)`:
+
+```
+ERROR draft.transitions [unknown_transition_target]: Node 'draft' has a transition to 'reviw' which does not exist. Check the node id spelling.
+WARN draft.llm_settings.model_name [llm_no_model]: LLM node 'draft' has no model_name in llm_settings. The pipeline's LLM settings will be used as a fallback.
+1 error(s), 1 warning(s)
+```
+
+Exit code: 0 when valid (warnings allowed), 6 when not.
 
 ## Running agents and pipelines from scripts
 
