@@ -53,6 +53,27 @@ describe("claude plugin", () => {
     expect(skill).not.toContain("pipelines are not listed");
   });
 
+  it("teaches the story 04 commands the way they work without a terminal", () => {
+    const skill = pluginFiles()["skills/elitea/SKILL.md"]!;
+    for (const cmd of [
+      "elitea-cli agents create -f <file>",
+      "elitea-cli pipelines create --name",
+      "elitea-cli agents update <agent> -f <file> --dry-run",
+      "elitea-cli pipelines update <pipeline> --yaml <file>",
+      "elitea-cli agents version create <agent>",
+      "elitea-cli agents version default <agent>",
+      "elitea-cli pipelines validate -f <file> -o json",
+      "elitea-cli agents delete <id> --yes",
+      "--replace-with <version>",
+    ]) {
+      expect(skill).toContain(cmd);
+    }
+    // `edit` needs a terminal: Claude must use get → file → update instead.
+    expect(skill).toContain("never use `edit`");
+    // Each command named in the skill exists in the CLI (cli.ts registers them).
+    expect(skill).toContain("only after the user confirmed");
+  });
+
   it("runs only read commands without a prompt and asks before any run or change (AC-23)", () => {
     const { allow, ask } = ELITEA_PERMISSIONS;
     expect(allow).toContain("Bash(elitea-cli agents)");
@@ -93,7 +114,7 @@ describe("sessionContext", () => {
         "You are running inside elitea-cli, connected to EliteA (https://next.elitea.ai).",
         "User: Jo Doe. Active EliteA project: Personal (id 12321).",
         "The user's EliteA agents and pipelines live in this project and run on the EliteA server.",
-        "Use the `elitea` skill (the `elitea-cli` command) for anything about EliteA projects, agents or pipelines, or running them.",
+        "Use the `elitea` skill (the `elitea-cli` command) for anything about EliteA projects, agents or pipelines: running, creating, changing or deleting them.",
       ].join("\n"),
     );
   });

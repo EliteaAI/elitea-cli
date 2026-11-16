@@ -1,0 +1,17 @@
+# elitea-cli agents create -f examples/agent.yaml
+# The platform's own create body. Without `versions`, these top-level fields become the base version.
+name: Code reviewer
+description: Reviews a diff and lists the problems it finds
+instructions: |
+  You review code changes. List bugs first, then risky changes, then style.
+  Quote the line you mean. Say "No problems found" when there are none.
+# {} uses the project's default model; to pick one, add a name from `elitea-cli models`:
+#   llm_settings:
+#     model_name: global.openai.gpt-6-luna
+llm_settings: {}
+welcome_message: Paste a diff to review.
+conversation_starters:
+  - Review my last commit
+variables:
+  - name: language
+    value: TypeScript
