@@ -40,6 +40,12 @@ elitea-cli launch claude    # Claude Code
 | `elitea-cli credentials types\|list\|get` | Credential types and their fields; saved credentials, secrets as `****` |
 | `elitea-cli credentials create\|update -f <file>` | Create or change a credential; secrets only via `--secret` / `--secret-env` |
 | `elitea-cli credentials test\|delete <credential>` | Check a credential's connection, or delete it |
+| `elitea-cli toolkits types [type]` | Toolkit types the project can use, or one type's settings and tools |
+| `elitea-cli toolkits list\|get\|tools` | Saved toolkits (secrets as `****`), one toolkit, the tools it exposes |
+| `elitea-cli toolkits create\|update -f <file>` | Create or change a toolkit; `credential: "<title>"`, secrets via `--secret` / `--secret-env` |
+| `elitea-cli toolkits test <toolkit> <tool>` | Run one tool once and print its result |
+| `elitea-cli toolkits delete <toolkit>` | Delete a toolkit (agents that use it lose it) |
+| `elitea-cli agents toolkits add\|remove <agent> <toolkit>` | Attach a toolkit to an agent version, or detach it |
 | `elitea-cli launch claude` | Start Claude Code wired to EliteA |
 | `elitea-cli api <METHOD> <path>` | Call any EliteA API endpoint with the stored token |
 | `elitea-cli config list\|get\|set\|unset` | Show and change CLI settings (output, color, timeout) |
@@ -492,6 +498,85 @@ OAuth types that need a browser sign-in (Teams, Outlook, SharePoint, Dataverse, 
 from the CLI, but the CLI does not sign in: `get` and `test` print `Sign-in required: open ELITEA →
 Credentials → <title> to sign in (<link>)`.
 
+## Toolkits
+
+A toolkit is a configured integration (Jira, GitHub, an MCP server, …) that agents use as tools.
+Secret settings are handled as for credentials: never shown (`****` in every output and in
+`--debug`), never taken from a file or the command line.
+
+```sh
+elitea-cli toolkits types                 # TYPE, TITLE, CREDENTIAL, TOOLS (--mcp: MCP types)
+elitea-cli toolkits types jira            # settings (* required, secret), the credential field, the tools
+elitea-cli toolkits types jira -o json    # {credential_field, settings, tools, schema}
+elitea-cli toolkits list [--type jira] [--search text] [--mcp]   # ID, NAME, TYPE, CREDENTIAL
+elitea-cli toolkits get "Jira EL"         # settings, credential, tools with SELECTED yes/no
+elitea-cli toolkits tools "Jira EL"       # NAME, DESCRIPTION, SELECTED
+```
+
+A type the project cannot use (blocked on this server, or missing because a platform dependency
+is not installed) → `Toolkit type <t> is not available in this project`, exit 5. Name a toolkit by
+id or name.
+
+### `create` / `update`
+
+```yaml
+# jira-toolkit.yaml
+type: jira
+name: Jira EL
+credential: Jira EL                 # a credential title or label
+settings:
+  limit: 10
+  selected_tools: [search_using_jql, create_issue]   # omitted or []: every tool
+```
+
+```sh
+elitea-cli toolkits create -f jira-toolkit.yaml          # Created toolkit Jira EL (115)
+elitea-cli toolkits update "Jira EL" -f changes.yaml     # only the settings given change
+elitea-cli toolkits create -f squad.yaml --secret-env access_key=SQUAD_KEY
+```
+
+- `credential:` is looked up among this project's credentials first, then your personal ones,
+  then those shared from the public project; only credentials of the type the toolkit needs count.
+  No match → `Credential <title> not found in project <id>`, two at the same level → `matches
+  several`, both exit 5, nothing created. Setting the field yourself (`settings.jira_configuration:
+  {elitea_title, private}`) works too.
+- Secret settings (`toolkits types <type>` marks them) come from `--secret <setting>` or
+  `--secret-env <setting>=<VAR>`, as for credentials. A value in the file or `****` → exit 2.
+- An unknown tool in `selected_tools` → exit 6, nothing sent. EliteA's refusals (a missing required
+  setting, a blocked type, sharing rules) are printed as EliteA words them, exit 6.
+- `update` keeps every setting the file leaves out, secrets included; `null` clears a setting. If
+  someone changed the toolkit since it was read, exit 6 and nothing is sent.
+
+### `test` / `delete`
+
+```sh
+elitea-cli toolkits test "Jira EL" search_using_jql --args '{"jql": "project = EL", "limit": 5}'
+elitea-cli toolkits test 115 create_issue --args-file issue.json --yes -o json
+elitea-cli toolkits delete "Jira EL"
+```
+
+`test` runs the tool once on EliteA against the real service, so in a terminal it asks first
+(`Run <tool> on <toolkit>? It may change data in <service>.`); `--yes` skips the question and is
+required without a terminal (exit 2 otherwise). It prints the tool's result (exit 0) or its error
+(exit 1); `--timeout <seconds>` (default 300) → exit 8. `-o json`: `{ok, result, error, tool, toolkit}`.
+
+`delete` asks first. EliteA does not refuse to delete a toolkit agents use: it removes it from
+every agent version, published ones too, and does not say which ones.
+
+### Attaching toolkits to agents
+
+```sh
+elitea-cli agents toolkits add "Release bot" "Jira EL" --tools search_using_jql,create_issue
+elitea-cli agents toolkits remove "Release bot" "Jira EL" --agent-version v2
+```
+
+`add` attaches the toolkit to the default version (or `--agent-version`) with all the tools the
+toolkit has selected, or only those in `--tools`: `Attached <toolkit> to <agent>/<version> (<n>
+tools)`. Already attached → said, exit 0, nothing changed; to change the tools, `remove` and `add`
+again. A tool the toolkit doesn't have → exit 6. `remove` of a toolkit that is not attached → exit 5.
+A published version cannot change (exit 6, create a version first); if someone attached or detached
+it in between → exit 6. Pipelines name their toolkits in the pipeline YAML (`pipelines update --yaml`).
+
 ## Running agents and pipelines from scripts
 
 ```sh
@@ -683,6 +768,13 @@ sees only the message Claude sends it (Claude includes the code it needs), not y
 | `/elitea:agents [search] [--project …]` | Agents and pipelines in the project |
 | `/elitea:projects` | Your projects, the active one marked |
 | `/elitea:chat <agent> <message>` | Send a message to an agent and show its answer |
+| `/elitea:toolkits [toolkit \| type \| search]` | Toolkits in the project, or one toolkit's tools |
+
+Toolkits work from the chat too ("give the Release bot agent the Jira EL toolkit with only
+search"): Claude reads the type with `toolkits types`, writes the file, and runs `toolkits create`
+and `agents toolkits add`, each after your OK. It never writes a secret into a file: for a secret
+setting it gives you the `--secret-env` command to run yourself. Before `toolkits test` it names the
+tool and its arguments and waits for your OK, because the tool acts on the real service.
 
 What `launch` adds to the `claude` command line (nothing is written into `~/.claude`):
 - `--append-system-prompt`: server, user and active project;

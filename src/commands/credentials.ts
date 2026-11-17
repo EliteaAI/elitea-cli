@@ -219,7 +219,7 @@ export async function getCommand(query: string | undefined, opts: CredentialOpti
 // create, update
 // ---------------------------------------------------------------------------------------------
 
-async function readSource(path: string): Promise<{ text: string; source: string }> {
+export async function readSource(path: string): Promise<{ text: string; source: string }> {
   try {
     return { text: path === "-" ? await readStdin("-f -") : await readFile(path, "utf8"), source: path === "-" ? "stdin" : path };
   } catch (err) {
@@ -241,7 +241,7 @@ function parseSecretEnv(values: string[]): Array<{ field: string; variable: stri
  * AC-4, AC-6: secret values from a masked prompt (terminal), stdin (exactly one --secret) or
  * environment variables. Nothing is ever taken from the command line itself.
  */
-async function collectSecrets(opts: CredentialOptions, secrets: string[], typeName: string): Promise<Record<string, string>> {
+export async function collectSecrets(opts: Pick<CredentialOptions, "secret" | "secretEnv">, secrets: string[], typeName: string): Promise<Record<string, string>> {
   const prompted = opts.secret ?? [];
   const fromEnv = parseSecretEnv(opts.secretEnv ?? []);
   const fields = [...prompted, ...fromEnv.map((e) => e.field)];
