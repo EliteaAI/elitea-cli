@@ -37,6 +37,9 @@ elitea-cli launch claude    # Claude Code
 | `elitea-cli pipelines run <pipeline> [input]` | Run a pipeline once and print its output |
 | `elitea-cli pipelines create\|update\|edit\|version\|delete` | The same as for agents, on pipelines (and `--yaml` for the pipeline YAML only) |
 | `elitea-cli pipelines validate -f <file>` | Check pipeline YAML on EliteA without saving it |
+| `elitea-cli credentials types\|list\|get` | Credential types and their fields; saved credentials, secrets as `****` |
+| `elitea-cli credentials create\|update -f <file>` | Create or change a credential; secrets only via `--secret` / `--secret-env` |
+| `elitea-cli credentials test\|delete <credential>` | Check a credential's connection, or delete it |
 | `elitea-cli launch claude` | Start Claude Code wired to EliteA |
 | `elitea-cli api <METHOD> <path>` | Call any EliteA API endpoint with the stored token |
 | `elitea-cli config list\|get\|set\|unset` | Show and change CLI settings (output, color, timeout) |
@@ -414,6 +417,80 @@ WARN draft.llm_settings.model_name [llm_no_model]: LLM node 'draft' has no model
 ```
 
 Exit code: 0 when valid (warnings allowed), 6 when not.
+
+## Credentials
+
+Credentials (Jira, GitHub, AI provider keys, …) can be prepared by script without a secret ever
+reaching the screen, the shell history or Git. A stored secret cannot be read back: `get`, `list`
+and every `-o json|yaml` print secret fields as `****`, and `--debug` masks them too.
+
+```sh
+elitea-cli credentials types                       # TYPE, TITLE, SECTION, FIELDS (* required, (secret))
+elitea-cli credentials types --type jira -o json   # the type's full schema
+elitea-cli credentials list [--type github]        # ID, TITLE, TYPE, SCOPE, STATUS
+elitea-cli credentials get "Jira EL"               # every field; secrets as ****
+```
+
+`SCOPE` is `project`, `personal` (your personal project) or `shared` (shared from the public
+project). `STATUS` is the result of the last check EliteA stored (`ok`, `failed`, `unknown`); `list`
+runs no check. Name a credential by id, title (`elitea_title`) or label.
+
+### `create` / `update`
+
+The file uses EliteA's shape. Leave secret fields **out of the file**:
+
+```yaml
+# jira-cred.yaml
+elitea_title: jira_el        # unique id: letters, digits, _
+label: Jira EL
+type: jira
+data:
+  base_url: https://jira.example.com
+  username: ada
+```
+
+```sh
+printf %s "$JIRA_TOKEN" | elitea-cli credentials create -f jira-cred.yaml --secret api_key
+elitea-cli credentials create -f jira-cred.yaml --secret-env api_key=JIRA_TOKEN
+elitea-cli credentials create -f jira-cred.yaml --secret api_key      # in a terminal: masked prompt
+```
+
+- `--secret <field>` asks with a masked prompt in a terminal; otherwise it reads stdin (one
+  trailing newline is dropped), so only one `--secret` works without a terminal: give the others
+  with `--secret-env`.
+- `--secret-env <field>=<VAR>` takes the value from an environment variable; unset or empty → exit 2.
+- No option takes a secret value itself (it would land in the shell history).
+- A secret field with a value in the file → `Secret field must come from --secret or --secret-env,
+  not from the file`, exit 2, nothing sent. `****` in the file → exit 2 as well.
+
+`update` changes only what the file gives; everything else, secrets included, keeps its stored
+value. A file from `credentials get -o yaml` works once its `****` lines are removed. A field set to
+`null` is cleared. Before saving, the CLI reads the credential again: if someone changed it in
+between, it prints `<title> was changed by someone else; run the command again` (exit 6) and sends
+nothing.
+
+```sh
+elitea-cli credentials update jira_el -f jira-cred.yaml
+printf %s "$NEW_TOKEN" | elitea-cli credentials update jira_el -f jira-cred.yaml --secret api_key
+```
+
+EliteA's refusals (a duplicate title, a missing required field, an admin-managed type, a team
+sign-in only project admins may change) are printed as EliteA words them, exit 6. A credential
+shared from another project is changed in that project (`-p <id>`).
+
+### `test` / `delete`
+
+```sh
+elitea-cli credentials test "Jira EL"      # Connection OK (exit 0) / Connection failed: <reason> (exit 1)
+elitea-cli credentials delete jira_el      # asks first; --yes in scripts
+```
+
+`test` needs the permission to use secrets: without it EliteA answers 403 (exit 4). Deleting a
+credential that toolkits use is not refused; those toolkits fail until they get another one.
+
+OAuth types that need a browser sign-in (Teams, Outlook, SharePoint, Dataverse, …) can be created
+from the CLI, but the CLI does not sign in: `get` and `test` print `Sign-in required: open ELITEA →
+Credentials → <title> to sign in (<link>)`.
 
 ## Running agents and pipelines from scripts
 

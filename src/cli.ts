@@ -15,6 +15,15 @@ import {
   versionDefaultCommand,
 } from "./commands/authoring.js";
 import { listCommand, STATUSES } from "./commands/agents.js";
+import {
+  createCommand as credentialCreateCommand,
+  deleteCommand as credentialDeleteCommand,
+  getCommand as credentialGetCommand,
+  listCommand as credentialListCommand,
+  testCommand as credentialTestCommand,
+  typesCommand as credentialTypesCommand,
+  updateCommand as credentialUpdateCommand,
+} from "./commands/credentials.js";
 import { collect } from "./commands/common.js";
 import { getCommand, versionsCommand } from "./commands/inspect.js";
 import { runCommand } from "./commands/run.js";
@@ -25,7 +34,7 @@ import { modelsCommand } from "./commands/models.js";
 import { projectCommand, projectsCommand } from "./commands/project.js";
 import { statusCommand } from "./commands/status.js";
 import { EXIT, EXIT_CODES_HELP, errorJson, exitCodeOf, usageError } from "./errors.js";
-import { scrub } from "./redact.js";
+import { scrub, scrubAll } from "./redact.js";
 import type { ItemKind } from "./resolve.js";
 import { setEnvFlag } from "./session.js";
 
@@ -421,6 +430,88 @@ runOptions(
     process.exitCode = await runCommand("pipeline", query, input, opts);
   });
 
+const credentials = program
+  .command("credentials")
+  .description("List, inspect, create, change, test and delete credentials; secrets are never shown")
+  .addOption(envOption())
+  .enablePositionalOptions();
+
+const credentialCommon = (cmd: Command) => cmd.addOption(envOption()).option("-p, --project <id|name>", PROJECT_HELP);
+const SECRET_HELP = "a secret field to set: masked prompt in a terminal, else read from stdin (repeatable in a terminal)";
+const SECRET_ENV_HELP = "a secret field from an environment variable: <field>=<ENV_VAR> (repeatable)";
+
+credentialCommon(credentials.command("types").description("List credential types, their fields and which ones are secret"))
+  .option("--type <type>", "only this type")
+  .option("-o, --output <format>", `${OUTPUT_HELP}; json/yaml give each type's full schema`)
+  .option("--json", "same as -o json")
+  .addHelpText("after", "\nExamples:\n  elitea-cli credentials types\n  elitea-cli credentials types --type jira -o json")
+  .action(credentialTypesCommand);
+
+credentialCommon(credentials.command("list").description("List credentials of the project and those shared with it (no connection check)"))
+  .option("--type <type>", "only credentials of this type")
+  .option("-o, --output <format>", OUTPUT_HELP)
+  .option("--json", "same as -o json")
+  .addHelpText("after", "\nExample:\n  elitea-cli credentials list --type github -o json")
+  .action(credentialListCommand);
+
+credentialCommon(credentials.command("get").argument("[credential]", "credential id or title").description("Show a credential; secret fields print as ****"))
+  .option("-o, --output <format>", `${OUTPUT_HELP}; json/yaml: the credential as EliteA returns it, secrets as ****`)
+  .option("--json", "same as -o json")
+  .addHelpText("after", "\nExample:\n  elitea-cli credentials get jira_el -o yaml > jira-cred.yaml")
+  .action(credentialGetCommand);
+
+const CREDENTIAL_FILE_HELP = `
+The file uses EliteA's shape: {elitea_title, label, type, shared, data: {…}}. Leave secret fields
+out of the file; give them with --secret <field> or --secret-env <field>=<VAR>. A secret value is
+never accepted on the command line (it would land in the shell history).`;
+
+credentialCommon(credentials.command("create").description("Create a credential from a YAML or JSON file"))
+  .option("-f, --file <path>", "the credential; - reads stdin")
+  .option("--secret <field>", SECRET_HELP, collect)
+  .option("--secret-env <field=VAR>", SECRET_ENV_HELP, collect)
+  .option("-o, --output <format>", "text, json or yaml (secrets as ****)")
+  .addHelpText(
+    "after",
+    `${CREDENTIAL_FILE_HELP}
+
+Examples:
+  printf %s "$JIRA_TOKEN" | elitea-cli credentials create -f jira-cred.yaml --secret api_key
+  elitea-cli credentials create -f github-cred.yaml --secret-env access_token=GITHUB_PAT`,
+  )
+  .action(credentialCreateCommand);
+
+credentialCommon(
+  credentials
+    .command("update")
+    .argument("<credential>", "credential id or title")
+    .description("Change a credential from a file; fields and secrets left out keep their stored value"),
+)
+  .option("-f, --file <path>", "fields to change, in the create shape; - reads stdin")
+  .option("--secret <field>", SECRET_HELP, collect)
+  .option("--secret-env <field=VAR>", SECRET_ENV_HELP, collect)
+  .option("-o, --output <format>", "text, json or yaml (secrets as ****)")
+  .addHelpText(
+    "after",
+    `${CREDENTIAL_FILE_HELP}
+
+Examples:
+  elitea-cli credentials update jira_el -f jira-cred.yaml
+  printf %s "$NEW_TOKEN" | elitea-cli credentials update jira_el -f jira-cred.yaml --secret api_key`,
+  )
+  .action(credentialUpdateCommand);
+
+credentialCommon(credentials.command("test").argument("<credential>", "credential id or title").description("Check the connection of a saved credential"))
+  .option("-o, --output <format>", "text or json ({ok, message, credential})")
+  .addHelpText("after", "\nExit codes: 0 connection OK, 1 connection failed, 4 no permission to test credentials.\n\nExample:\n  elitea-cli credentials test \"Jira EL\"")
+  .action(async (query: string, opts) => {
+    process.exitCode = await credentialTestCommand(query, opts);
+  });
+
+credentialCommon(credentials.command("delete").argument("<credential>", "credential id or title").description("Delete a credential"))
+  .option("-y, --yes", "don't ask for confirmation")
+  .addHelpText("after", "\nExample:\n  elitea-cli credentials delete jira_el --yes")
+  .action(credentialDeleteCommand);
+
 program
   .command("launch")
   .argument("[integration]", "claude")
@@ -542,12 +633,14 @@ function wantsJsonArgv(argv = process.argv.slice(2)): boolean {
 }
 
 function fail(err: unknown, exit: number): never {
+  // Secret values given to this command never reach stderr, even inside a platform message (AC-14).
+  const clean = (text: string) => scrubAll(scrub(text, process.env.ELITEA_CLI_TOKEN), ctx.secretValues);
   if (wantsJsonArgv()) {
-    console.error(errorJson(err).replace(/"exit":\d+/, `"exit":${exit}`));
+    console.error(clean(errorJson(err).replace(/"exit":\d+/, `"exit":${exit}`)));
   } else {
-    console.error(`error: ${(err as Error).message}`);
+    console.error(clean(`error: ${(err as Error).message}`));
   }
-  if (isDebug() && err instanceof Error && err.stack) console.error(scrub(err.stack, process.env.ELITEA_CLI_TOKEN));
+  if (isDebug() && err instanceof Error && err.stack) console.error(clean(err.stack));
   process.exit(exit);
 }
 

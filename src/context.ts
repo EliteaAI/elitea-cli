@@ -21,12 +21,14 @@ export interface RunContext {
   operation?: TokenOperation;
   /** Extra exact key names masked in --debug output (fields a type schema marks secret). */
   secretKeys: string[];
+  /** Secret values this command handles (credentials --secret): removed from any text it prints. */
+  secretValues: string[];
   /** The option that reads stdin in this command (AC-21b). */
   stdinOwner?: string;
 }
 
 function fresh(): RunContext {
-  return { debug: false, quiet: false, yes: false, color: true, json: false, settings: {}, secretKeys: [] };
+  return { debug: false, quiet: false, yes: false, color: true, json: false, settings: {}, secretKeys: [], secretValues: [] };
 }
 
 export const ctx: RunContext = fresh();

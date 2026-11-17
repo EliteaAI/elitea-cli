@@ -1,7 +1,7 @@
 import { ctx, isDebug } from "./context.js";
 import { BUSY_MESSAGE, httpErrorMessage, parseErrorBody, platformText } from "./platformError.js";
 
-import { redactBody, redactPath, scrub } from "./redact.js";
+import { redactBody, redactPath, scrub, scrubAll } from "./redact.js";
 
 export interface EliteaUser {
   id: number;
@@ -138,6 +138,69 @@ export interface MessageGroup {
   };
 }
 
+/** One entry of the configuration type catalog (`configurations/available`). */
+export interface CredentialType {
+  type: string;
+  section: string;
+  /** JSON schema of the create body; `properties.data` is the type's own schema. */
+  config_schema: { title?: string; properties?: { data?: JsonSchema; [key: string]: unknown }; [key: string]: unknown };
+  has_test_connection?: boolean;
+  managed_by?: string | null;
+  manage_url?: string | null;
+  check_connection_label?: string | null;
+  [key: string]: unknown;
+}
+
+export interface JsonSchema {
+  type?: string;
+  title?: string;
+  description?: string;
+  format?: string;
+  writeOnly?: boolean;
+  hidden?: boolean;
+  enum?: unknown[];
+  default?: unknown;
+  anyOf?: JsonSchema[];
+  allOf?: JsonSchema[];
+  $ref?: string;
+  properties?: Record<string, JsonSchema>;
+  required?: string[];
+  $defs?: Record<string, JsonSchema>;
+  metadata?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+/** A saved credential ("configuration" in the API), as list and details return it. */
+export interface Credential {
+  id: number;
+  uuid: string;
+  project_id: number;
+  elitea_title: string;
+  label?: string | null;
+  type: string;
+  section: string;
+  data: Record<string, unknown>;
+  meta?: Record<string, unknown>;
+  shared?: boolean;
+  status_ok?: boolean;
+  status_logs?: string | null;
+  author_id?: number | null;
+  created_at?: string;
+  updated_at?: string | null;
+  [key: string]: unknown;
+}
+
+/** Sections whose rows are credentials (integrations and AI provider keys). */
+export const CREDENTIAL_SECTIONS = ["credentials", "ai_credentials"];
+
+/** POST check_connection: what the platform answered, kept as it said it. */
+export interface ConnectionCheck {
+  ok: boolean;
+  message?: string;
+  /** The type needs a browser sign-in before it can connect. */
+  signInRequired?: boolean;
+}
+
 /** The PAT is missing, expired, revoked, or lacks access. */
 export class AuthError extends Error {
   constructor(message = "EliteA rejected the token — run `elitea-cli login` again") {
@@ -154,17 +217,24 @@ export class EliteaError extends Error {
     /** The platform's error code (`TOKEN_SCOPE_PROJECT`, `project_budget_exceeded`, …). */
     readonly code?: string,
     /** What the platform said, unformatted: its text and its field errors. */
-    readonly platform?: { text?: string; fields: string[] },
+    readonly platform?: PlatformSaid,
   ) {
     super(message);
     this.name = "EliteaError";
   }
 }
 
+/** What the platform said, unformatted: its text, its field errors and the field it names. */
+export interface PlatformSaid {
+  text?: string;
+  fields: string[];
+  field?: string;
+}
+
 /** HTTP 403: the token works but lacks access to this project or item. */
 export class AccessDeniedError extends EliteaError {
-  constructor(message = "Forbidden", code?: string) {
-    super(message, 403, code);
+  constructor(message = "Forbidden", code?: string, platform?: PlatformSaid) {
+    super(message, 403, code, platform);
     this.name = "AccessDeniedError";
   }
 }
@@ -248,15 +318,33 @@ export class EliteaClient {
   /** --debug: `METHOD path?query → status (ms)`, then the masked bodies; never the token (AC-13). */
   private async logExchange(method: string, url: string, body: string, res: Response, started: number): Promise<void> {
     const extra = ctx.secretKeys;
+    // Values the user typed for this command never appear, whatever key carries them (AC-14).
+    const clean = (text: string) => scrubAll(text, ctx.secretValues);
     console.error(`${method} ${redactPath(url, extra)} → ${res.status} (${Date.now() - started} ms)`);
-    if (body) console.error(`  request:  ${body.startsWith("(") ? body : redactBody(body, extra)}`);
+    if (body) console.error(`  request:  ${body.startsWith("(") ? body : clean(redactBody(body, extra))}`);
     const text = scrub(await res.clone().text().catch(() => ""), this.token);
-    if (text) console.error(`  response: ${redactBody(text, extra)}`);
+    if (text) console.error(`  response: ${clean(redactBody(text, extra))}`);
   }
 
   /** A call with EliteA's errors mapped to CLI errors (AC-8…AC-12). JSON in, JSON out; 204 → undefined. */
   async request<T>(method: HttpMethod, path: string, options: RequestOptions = {}, retried = false): Promise<T> {
     const res = await this.send(method, path, options);
+    if (res.ok) {
+      const text = await res.text();
+      return (text ? JSON.parse(text) : undefined) as T;
+    }
+    // Only reads are retried: a write may have been applied before the 503 (AC-12).
+    if (res.status === 503 && method === "GET" && !retried) {
+      // Busy worker pool: {"error": "temporarily_unavailable", "retry_after": 5}
+      const err = parseErrorBody(await res.text().catch(() => ""), res.headers.get("retry-after"));
+      await new Promise((resolve) => setTimeout(resolve, Math.min(err.retryAfter ?? 5, 30) * 1000));
+      return this.request<T>(method, path, options, true);
+    }
+    return this.fail(method, path, res);
+  }
+
+  /** A response that is not 2xx as the CLI error for it (AC-8…AC-12). */
+  private async fail(method: HttpMethod, path: string, res: Response): Promise<never> {
     const bare = path.split("?")[0]!;
     if (res.status === 401) throw new AuthError();
     if (res.status >= 300 && res.status < 400) {
@@ -264,23 +352,12 @@ export class EliteaClient {
       if (isLoginRedirect(location)) throw new AuthError();
       throw new EliteaError(`EliteA ${bare} redirected unexpectedly to ${location || "(no location)"}`, res.status);
     }
-    if (res.ok) {
-      const text = await res.text();
-      return (text ? JSON.parse(text) : undefined) as T;
-    }
     const err = parseErrorBody(await res.text().catch(() => ""), res.headers.get("retry-after"));
-    if (res.status === 503) {
-      // Only reads are retried: a write may have been applied before the 503 (AC-12).
-      if (method !== "GET") throw new EliteaError(BUSY_MESSAGE, 503, err.code);
-      if (!retried) {
-        // Busy worker pool: {"error": "temporarily_unavailable", "retry_after": 5}
-        await new Promise((resolve) => setTimeout(resolve, Math.min(err.retryAfter ?? 5, 30) * 1000));
-        return this.request<T>(method, path, options, true);
-      }
-    }
+    if (res.status === 503 && method !== "GET") throw new EliteaError(BUSY_MESSAGE, 503, err.code);
     const message = httpErrorMessage(res.status, bare, err, { projectId: ctx.projectId, operation: ctx.operation });
-    if (res.status === 403) throw new AccessDeniedError(message, err.code);
-    throw new EliteaError(message, res.status, err.code, { text: platformText(err), fields: err.fields });
+    const said = { text: platformText(err), fields: err.fields, field: err.field };
+    if (res.status === 403) throw new AccessDeniedError(message, err.code, said);
+    throw new EliteaError(message, res.status, err.code, said);
   }
 
   getUser(): Promise<EliteaUser> {
@@ -374,6 +451,83 @@ export class EliteaClient {
     return this.request<PipelineValidation>("POST", `/api/v2/elitea_core/validate_pipeline/prompt_lib/${projectId}`, {
       body: { pipeline_yaml: yaml },
     });
+  }
+
+  /** Credential types this project can create, with their schemas (admin-managed types are left out). */
+  async listCredentialTypes(projectId: number): Promise<CredentialType[]> {
+    const params = new URLSearchParams(CREDENTIAL_SECTIONS.map((s) => ["section", s]));
+    return this.get<CredentialType[]>(`/api/v2/configurations/available/${projectId}?${params}`);
+  }
+
+  /**
+   * Credentials of the project, then (`includeShared`) those the public project shares. Every page
+   * is read; `type` filters on the server.
+   */
+  async listCredentials(projectId: number, opts: { type?: string; includeShared?: boolean } = {}): Promise<Credential[]> {
+    type Page = { total?: number; items?: Credential[]; shared?: { total?: number; items?: Credential[] } };
+    const PAGE = 100;
+    const page = (own: number, shared?: number) => {
+      const params = new URLSearchParams(CREDENTIAL_SECTIONS.map((s) => ["section", s]));
+      if (opts.type) params.append("type", opts.type);
+      params.set("offset", String(own));
+      params.set("limit", String(shared === undefined ? PAGE : 1));
+      if (shared !== undefined) {
+        params.set("include_shared", "true");
+        params.set("shared_offset", String(shared));
+        params.set("shared_limit", String(PAGE));
+      }
+      return this.get<Page>(`/api/v2/configurations/configurations/${projectId}?${params}`);
+    };
+    // The server wraps an offset past the end back to 0, so the loops stop on the total.
+    const own: Credential[] = [];
+    for (;;) {
+      const p = await page(own.length);
+      own.push(...(p.items ?? []));
+      if (!p.items?.length || own.length >= (p.total ?? 0)) break;
+    }
+    const shared: Credential[] = [];
+    while (opts.includeShared) {
+      const p = (await page(0, shared.length)).shared;
+      shared.push(...(p?.items ?? []));
+      if (!p?.items?.length || shared.length >= (p.total ?? 0)) break;
+    }
+    return [...own, ...shared];
+  }
+
+  /** One credential with its stored data; secret fields hold `{{secret.…}}` references, not values. */
+  getCredential(projectId: number, credentialId: number): Promise<Credential> {
+    return this.get<Credential>(`/api/v2/configurations/configuration/${projectId}/${credentialId}`);
+  }
+
+  createCredential(projectId: number, body: Record<string, unknown>): Promise<Credential> {
+    return this.request<Credential>("POST", `/api/v2/configurations/configurations/${projectId}`, { body });
+  }
+
+  /** `data` replaces the stored data wholesale; other fields left out keep their value. */
+  updateCredential(projectId: number, credentialId: number, body: Record<string, unknown>): Promise<Credential> {
+    return this.request<Credential>("PUT", `/api/v2/configurations/configuration/${projectId}/${credentialId}`, { body });
+  }
+
+  async deleteCredential(projectId: number, credentialId: number): Promise<void> {
+    await this.request("DELETE", `/api/v2/configurations/configuration/${projectId}/${credentialId}`);
+  }
+
+  /**
+   * Run the type's connection check on a saved credential: its stored data (vault references are
+   * resolved on the server) and its uuid, which credential governance tests instead of the body.
+   * A failed check (400) or a needed sign-in (401 requires_authorization) is a result, not an error.
+   */
+  async checkCredential(projectId: number, credential: Credential): Promise<ConnectionCheck> {
+    const path = `/api/v2/configurations/check_connection/${projectId}/${encodeURIComponent(credential.type)}`;
+    const opts = { body: credential.data, query: { configuration_uuid: credential.uuid } };
+    const res = await this.send("POST", path, opts);
+    const body = res.ok || res.status === 400 || res.status === 401 ? await res.clone().json().catch(() => undefined) : undefined;
+    const said = (body ?? {}) as { success?: boolean; message?: unknown; error?: unknown; requires_authorization?: boolean };
+    const message = typeof said.message === "string" ? said.message : typeof said.error === "string" ? said.error : undefined;
+    if (res.ok) return { ok: said.success !== false, message };
+    if (res.status === 401 && said.requires_authorization) return { ok: false, message, signInRequired: true };
+    if (res.status === 400 && said.success === false) return { ok: false, message };
+    return this.fail("POST", path, res);
   }
 
   /** Skills attached to a version (they are not part of the version object). */

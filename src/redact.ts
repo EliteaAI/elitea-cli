@@ -3,7 +3,7 @@ const SECRET_KEY = /token|secret|password|api[_-]?key|private[_-]?key|client[_-]
 
 export const MASK = "****";
 
-function isSecretKey(key: string, extra: string[]): boolean {
+export function isSecretKey(key: string, extra: string[] = []): boolean {
   return SECRET_KEY.test(key) || extra.includes(key);
 }
 
@@ -45,4 +45,9 @@ export function redactBody(text: string, extra: string[] = [], max = 2000): stri
 /** Remove `secret` from any text (stack traces, messages). */
 export function scrub(text: string, secret: string | undefined): string {
   return secret && secret.length >= 8 ? text.split(secret).join(MASK) : text;
+}
+
+/** Remove each of `secrets` (values the user gave, 4+ characters) from `text`, longest first. */
+export function scrubAll(text: string, secrets: string[]): string {
+  return [...secrets].filter((s) => s.length >= 4).sort((a, b) => b.length - a.length).reduce((t, s) => t.split(s).join(MASK), text);
 }

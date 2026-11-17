@@ -8,6 +8,8 @@ export interface PlatformError {
   code?: string;
   /** Field errors as `<field>: <message>` (Pydantic lists). */
   fields: string[];
+  /** The one field a `{"error", "field"}` body names (configurations API). */
+  field?: string;
   /** Seconds, from the body's `retry_after` or the Retry-After header. */
   retryAfter?: number;
   /** The platform says it is a budget limit. */
@@ -65,6 +67,7 @@ export function parseErrorBody(raw: string, retryAfterHeader?: string | null): P
     errorText = undefined;
   }
   out.text = errorText ?? str(src.message) ?? (typeof body.detail === "string" ? str(body.detail) : undefined);
+  out.field = str(body.field);
   for (const list of [body.error, body.errors, body.detail]) if (Array.isArray(list)) out.fields.push(...flatten(list));
   out.budget = str(src.type) === "budget_exceeded" || /budget/i.test(out.code ?? "");
   return out;
