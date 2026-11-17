@@ -32,6 +32,10 @@ export interface AgentChatOptions {
   variables?: AgentVariable[];
   /** Continue an existing conversation (its numeric id). */
   conversation?: number;
+  /** That conversation, already read (saves a request). */
+  loaded?: AgentConversation;
+  /** The agent participant to address, when the caller already picked it. */
+  participantId?: number;
   pollIntervalMs?: number;
   /** Give up waiting after this long; the run keeps going on EliteA. */
   timeoutMs?: number;
@@ -48,7 +52,8 @@ const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve,
 
 export const DEFAULT_TIMEOUT_MS = 30 * 60_000;
 
-function groupText(group: MessageGroup): string {
+/** The text of a message group: its text items, joined by blank lines. */
+export function groupText(group: MessageGroup): string {
   return group.message_items
     .map((item) => item.item_details?.content)
     .filter((c): c is string => typeof c === "string" && c.length > 0)
@@ -150,7 +155,8 @@ export class AgentChat {
     if (this.conversation) return;
     const { agentId, agentName, versionId, variables } = this.opts;
     if (this.opts.conversation) {
-      this.conversation = await this.client.getConversation(this.projectId, this.opts.conversation);
+      this.conversation =
+        this.opts.loaded?.id === this.opts.conversation ? this.opts.loaded : await this.client.getConversation(this.projectId, this.opts.conversation);
     } else {
       this.conversation = await this.client.createConversation(this.projectId, {
         name: conversationName(agentName, firstMessage),
@@ -159,8 +165,9 @@ export class AgentChat {
         variables,
       });
     }
-    const participant = this.conversation.participants.find(
-      (p) => p.entity_name === "application" && p.entity_meta?.id === agentId,
+    const wanted = this.opts.conversation ? this.opts.participantId : undefined;
+    const participant = this.conversation.participants.find((p) =>
+      wanted !== undefined ? p.id === wanted : p.entity_name === "application" && p.entity_meta?.id === agentId,
     );
     if (!participant) {
       throw new Error(`Conversation ${this.conversation.id} does not include agent "${agentName}" (id ${agentId})`);

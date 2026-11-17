@@ -38,6 +38,10 @@
     "elitea-cli:pipeline-versions": "tsup --silent && npm run -s elitea-cli -- pipelines versions",
     "elitea-cli:pipeline-run": "tsup --silent && npm run -s elitea-cli -- pipelines run",
     "elitea-cli:agent-chat": "tsup --silent && npm run -s elitea-cli -- agents chat",
+    "elitea-cli:chats": "tsup --silent && npm run -s elitea-cli -- chats list",
+    "elitea-cli:chat-show": "tsup --silent && npm run -s elitea-cli -- chats show",
+    "elitea-cli:chat-send": "tsup --silent && npm run -s elitea-cli -- chats send",
+    "elitea-cli:chat-delete": "tsup --silent && npm run -s elitea-cli -- chats delete",
     "elitea-cli:claude": "tsup --silent && npm run -s elitea-cli -- launch claude",
     "elitea-cli:reset": "rm -rf /tmp/elitea-cli-home",
     "prepublishOnly": "npm test && npm run typecheck && npm run build"

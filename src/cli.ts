@@ -37,6 +37,14 @@ import {
   typesCommand as toolkitTypesCommand,
   updateCommand as toolkitUpdateCommand,
 } from "./commands/toolkits.js";
+import {
+  DEFAULT_LAST,
+  DEFAULT_LIST_LIMIT,
+  deleteCommand as chatDeleteCommand,
+  listCommand as chatListCommand,
+  sendCommand as chatSendCommand,
+  showCommand as chatShowCommand,
+} from "./commands/chats.js";
 import { getCommand, versionsCommand } from "./commands/inspect.js";
 import { runCommand } from "./commands/run.js";
 import { envAddCommand, envListCommand, envRemoveCommand, envUseCommand } from "./commands/env.js";
@@ -672,6 +680,56 @@ toolkitCommon(toolkits.command("delete").argument("<toolkit>", "toolkit id or na
   .option("-y, --yes", "don't ask for confirmation")
   .addHelpText("after", "\nExample:\n  elitea-cli toolkits delete 115 --yes")
   .action(toolkitDeleteCommand);
+
+const chats = program
+  .command("chats")
+  .description("List, read, continue and delete your EliteA chats (numeric chat ids, see `chats list`)")
+  .addOption(envOption())
+  .enablePositionalOptions();
+
+const chatCommon = (cmd: Command) => cmd.addOption(envOption()).option("-p, --project <id|name>", PROJECT_HELP);
+
+chatCommon(chats.command("list").description("List your chats in the project, most recently updated first (the web UI's chat list)"))
+  .option("-s, --search <text>", "only chats whose name contains this text")
+  .option("--limit <n>", `show at most n chats (default ${DEFAULT_LIST_LIMIT})`)
+  .option("-o, --output <format>", `${OUTPUT_HELP}; json/yaml: [{id, uuid, name, agents, created_at, updated_at, running, private, author_id, messages}]`)
+  .option("--json", "same as -o json")
+  .addHelpText("after", "\nColumns: ID NAME PARTICIPANTS (agents) UPDATED (local time) RUNNING.\n\nExamples:\n  elitea-cli chats list\n  elitea-cli chats list -s report --limit 50 -o json")
+  .action(chatListCommand);
+
+chatCommon(chats.command("show").argument("<id>", "numeric chat id").description("Print a chat's messages, oldest first, in full"))
+  .option("--last <n>", `the last n messages (default ${DEFAULT_LAST})`)
+  .option("--all", "every message")
+  .option("-o, --output <format>", `${OUTPUT_HELP}; json/yaml: [{id, author, author_type, created_at, text, is_streaming, error?}]`)
+  .option("--json", "same as -o json")
+  .addHelpText("after", "\nA reply still being written is marked (still running).\n\nExamples:\n  elitea-cli chats show 1234\n  elitea-cli chats show 1234 --last 1 -o json | jq -r '.[0].text'")
+  .action(chatShowCommand);
+
+runOptions(
+  chats
+    .command("send")
+    .argument("<id>", "numeric chat id")
+    .argument("[message]", "the message (or use -f)")
+    .description("Send a message to an existing chat and print the agent's answer, as `agents run` does"),
+)
+  .option("--to <agent>", "the agent to answer (id or name) when the chat has several")
+  .addHelpText(
+    "after",
+    `\nA chat with a reply still being written is refused (exit 6) and nothing is sent.\n\nExamples:\n  id=$(elitea-cli agents run Reviewer -f diff.txt --no-wait -q)\n  elitea-cli chats send "$id" "And the tests?" -o json | jq -r .answer\n  elitea-cli chats send 1234 -f question.md --to "Code reviewer"\n${RUN_EXIT_HELP}`,
+  )
+  .action(async (id: string, message: string | undefined, opts) => {
+    process.exitCode = await chatSendCommand(id, message, opts);
+  });
+
+chatCommon(chats.command("delete").argument("<id...>", "numeric chat ids").description("Delete chats (and the files skill scripts created in them)"))
+  .option("-y, --yes", "don't ask for confirmation")
+  .addHelpText(
+    "after",
+    "\nSeveral ids are confirmed once; a failure on one does not stop the others, and the summary says\nwhich were deleted. Exit 0 when all were, else the exit code of the first failure.\n\nExamples:\n  elitea-cli chats delete 1234\n  elitea-cli chats delete 1234 1235 1236 --yes",
+  )
+  .action(async (ids: string[], opts) => {
+    process.exitCode = await chatDeleteCommand(ids, opts);
+  });
 
 program
   .command("launch")
