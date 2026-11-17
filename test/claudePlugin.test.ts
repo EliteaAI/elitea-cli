@@ -37,12 +37,13 @@ describe("claude plugin", () => {
     await expect(stat(join(home, "claude-plugin", "commands", "agents.md"))).resolves.toBeDefined();
   });
 
-  it("ships the skill and the three slash commands", () => {
+  it("ships the skill and the four slash commands", () => {
     expect(Object.keys(pluginFiles()).sort()).toEqual([
       ".claude-plugin/plugin.json",
       "commands/agents.md",
       "commands/chat.md",
       "commands/projects.md",
+      "commands/toolkits.md",
       "skills/elitea/SKILL.md",
     ]);
     const skill = pluginFiles()["skills/elitea/SKILL.md"]!;
@@ -114,7 +115,7 @@ describe("sessionContext", () => {
         "You are running inside elitea-cli, connected to EliteA (https://next.elitea.ai).",
         "User: Jo Doe. Active EliteA project: Personal (id 12321).",
         "The user's EliteA agents and pipelines live in this project and run on the EliteA server.",
-        "Use the `elitea` skill (the `elitea-cli` command) for anything about EliteA projects, agents or pipelines: running, creating, changing or deleting them.",
+        "Use the `elitea` skill (the `elitea-cli` command) for anything about EliteA projects, agents, pipelines, credentials or toolkits: running, creating, changing or deleting them.",
       ].join("\n"),
     );
   });

@@ -193,6 +193,44 @@ export interface Credential {
 /** Sections whose rows are credentials (integrations and AI provider keys). */
 export const CREDENTIAL_SECTIONS = ["credentials", "ai_credentials"];
 
+/**
+ * One toolkit type of the catalog (`toolkits/prompt_lib`): the JSON schema of a toolkit's
+ * `settings`, keyed by type in the catalog. Credential fields carry `configuration_types`.
+ */
+export interface ToolkitType extends JsonSchema {
+  metadata?: { label?: string; hidden?: boolean; categories?: string[]; [key: string]: unknown };
+}
+
+/** A saved toolkit ("tool" in the API), as list and details return it. */
+export interface Toolkit {
+  id: number;
+  type: string;
+  name?: string | null;
+  description?: string | null;
+  toolkit_name?: string | null;
+  author_id?: number;
+  settings: Record<string, unknown>;
+  meta?: Record<string, unknown>;
+  created_at?: string;
+  [key: string]: unknown;
+}
+
+/** GET toolkit_available_tools: the tools a toolkit discovers at run time (MCP, OpenAPI…). */
+export interface DiscoveredTools {
+  tools?: Array<{ name: string; description?: string | null }>;
+  args_schemas?: Record<string, unknown>;
+}
+
+/** POST test_toolkit_tool with await_response: the tool's own answer, kept as the SDK gives it. */
+export interface ToolTestResult {
+  success?: boolean;
+  result?: unknown;
+  error?: string | null;
+  execution_time_seconds?: number;
+  requires_authorization?: boolean;
+  [key: string]: unknown;
+}
+
 /** POST check_connection: what the platform answered, kept as it said it. */
 export interface ConnectionCheck {
   ok: boolean;
@@ -311,19 +349,26 @@ export class EliteaClient {
       if (isDebug()) console.error(`${method} ${redactPath(url, ctx.secretKeys)} → network error (${Date.now() - started} ms)`);
       throw new EliteaError(`Cannot reach ${this.baseUrl}: ${reason}`, 0);
     }
-    if (isDebug()) await this.logExchange(method, url, typeof body === "string" ? body : opts.form ? "(multipart form)" : "", res, started);
+    if (isDebug()) return this.logExchange(method, url, typeof body === "string" ? body : opts.form ? "(multipart form)" : "", res, started);
     return res;
   }
 
-  /** --debug: `METHOD path?query → status (ms)`, then the masked bodies; never the token (AC-13). */
-  private async logExchange(method: string, url: string, body: string, res: Response, started: number): Promise<void> {
+  /**
+   * --debug: `METHOD path?query → status (ms)`, then the masked bodies; never the token (AC-13).
+   * The body is read once and handed back in a new Response: reading a clone and then the
+   * original fails on large bodies ("Body has already been read", the toolkit type catalog).
+   */
+  private async logExchange(method: string, url: string, body: string, res: Response, started: number): Promise<Response> {
     const extra = ctx.secretKeys;
     // Values the user typed for this command never appear, whatever key carries them (AC-14).
     const clean = (text: string) => scrubAll(text, ctx.secretValues);
     console.error(`${method} ${redactPath(url, extra)} → ${res.status} (${Date.now() - started} ms)`);
     if (body) console.error(`  request:  ${body.startsWith("(") ? body : clean(redactBody(body, extra))}`);
-    const text = scrub(await res.clone().text().catch(() => ""), this.token);
+    const raw = await res.text().catch(() => "");
+    const text = scrub(raw, this.token);
     if (text) console.error(`  response: ${clean(redactBody(text, extra))}`);
+    const empty = [101, 204, 205, 304].includes(res.status);
+    return new Response(empty ? null : raw, { status: res.status, statusText: res.statusText, headers: res.headers });
   }
 
   /** A call with EliteA's errors mapped to CLI errors (AC-8…AC-12). JSON in, JSON out; 204 → undefined. */
@@ -528,6 +573,98 @@ export class EliteaClient {
     if (res.status === 401 && said.requires_authorization) return { ok: false, message, signInRequired: true };
     if (res.status === 400 && said.success === false) return { ok: false, message };
     return this.fail("POST", path, res);
+  }
+
+  /** Toolkit types this project can use, keyed by type; blocked types are left out by the platform. */
+  listToolkitTypes(projectId: number, opts: { mcp?: boolean } = {}): Promise<Record<string, ToolkitType>> {
+    return this.request<Record<string, ToolkitType>>("GET", `/api/v2/elitea_core/toolkits/prompt_lib/${projectId}`, {
+      query: { mcp: opts.mcp ? "true" : undefined },
+    });
+  }
+
+  /**
+   * Toolkits of the project (agents linked as tools are not toolkits and are left out), newest
+   * first. Every page is read; `types` and `mcp` filter on the server.
+   */
+  async listToolkits(projectId: number, opts: { query?: string; types?: string[]; mcp?: boolean } = {}): Promise<Toolkit[]> {
+    const PAGE = 100;
+    const rows: Toolkit[] = [];
+    for (;;) {
+      const params = new URLSearchParams({ limit: String(PAGE), offset: String(rows.length) });
+      if (opts.query) params.set("query", opts.query);
+      for (const t of opts.types ?? []) params.append("toolkit_type", t);
+      if (opts.mcp) params.set("mcp", "true");
+      const page = await this.get<{ total: number; rows: Toolkit[] }>(`/api/v2/elitea_core/tools/prompt_lib/${projectId}?${params}`);
+      rows.push(...page.rows);
+      if (page.rows.length === 0 || rows.length >= page.total) return rows;
+    }
+  }
+
+  /** One toolkit with its stored settings: credentials as references, secrets as `{{secret.…}}`. */
+  getToolkit(projectId: number, toolkitId: number): Promise<Toolkit> {
+    return this.get<Toolkit>(`/api/v2/elitea_core/tool/prompt_lib/${projectId}/${toolkitId}`);
+  }
+
+  /** 201 → the toolkit. Secret settings are moved to the vault by the platform. */
+  createToolkit(projectId: number, body: Record<string, unknown>): Promise<Toolkit> {
+    return this.request<Toolkit>("POST", `/api/v2/elitea_core/tools/prompt_lib/${projectId}`, { body });
+  }
+
+  /** Replaces the toolkit: `type`, `name`, `author_id`, `settings` and `meta` are all sent. */
+  updateToolkit(projectId: number, toolkitId: number, body: Record<string, unknown>): Promise<Toolkit> {
+    return this.request<Toolkit>("PUT", `/api/v2/elitea_core/tool/prompt_lib/${projectId}/${toolkitId}`, { body });
+  }
+
+  /** 204. Links to agent versions are removed with it (the database cascades); nothing is refused. */
+  async deleteToolkit(projectId: number, toolkitId: number): Promise<void> {
+    await this.request("DELETE", `/api/v2/elitea_core/tool/prompt_lib/${projectId}/${toolkitId}`);
+  }
+
+  /** Tools discovered at run time (MCP servers, OpenAPI specs); `{tools: []}` for fixed toolkits. */
+  discoverToolkitTools(projectId: number, toolkitId: number): Promise<DiscoveredTools> {
+    return this.get<DiscoveredTools>(`/api/v2/elitea_core/toolkit_available_tools/prompt_lib/${projectId}/${toolkitId}`);
+  }
+
+  /**
+   * Link a toolkit to an agent version (`attach`) or unlink it. `selectedTools` is the version's
+   * own choice of the toolkit's tools; undefined = all of them. 400 `{error}` for a published
+   * version, a link that already exists or is already gone.
+   */
+  async setToolkitRelation(
+    projectId: number,
+    toolkitId: number,
+    rel: { agentId: number; versionId: number; attach: boolean; selectedTools?: string[] },
+  ): Promise<void> {
+    await this.request("PATCH", `/api/v2/elitea_core/tool/prompt_lib/${projectId}/${toolkitId}`, {
+      body: {
+        entity_id: rel.agentId,
+        entity_version_id: rel.versionId,
+        entity_type: "agent",
+        has_relation: rel.attach,
+        ...(rel.selectedTools === undefined ? {} : { selected_tools: rel.selectedTools }),
+      },
+    });
+  }
+
+  /**
+   * Run one tool of a saved toolkit and wait for its answer (the platform's REST twin of the
+   * `test_toolkit_tool` socket event). `{result}` when it finished; a timeout is a 400 "Timeout".
+   */
+  testToolkitTool(
+    projectId: number,
+    toolkit: Pick<Toolkit, "id" | "type" | "toolkit_name" | "settings">,
+    tool: string,
+    params: Record<string, unknown>,
+    timeoutSeconds: number,
+  ): Promise<{ result?: ToolTestResult; task_id?: string }> {
+    return this.request("POST", `/api/v2/elitea_core/test_toolkit_tool/prompt_lib/${projectId}`, {
+      query: { await_response: "true", timeout: timeoutSeconds },
+      body: {
+        toolkit_config: { toolkit_id: toolkit.id, type: toolkit.type, toolkit_name: toolkit.toolkit_name ?? undefined, settings: toolkit.settings },
+        tool_name: tool,
+        tool_params: params,
+      },
+    });
   }
 
   /** Skills attached to a version (they are not part of the version object). */

@@ -33,12 +33,14 @@ name: elitea
 description: >-
   Use for anything about EliteA: the current EliteA project, user or server; listing EliteA
   projects, agents or pipelines; showing an agent's configuration; running an EliteA agent
-  or pipeline and using its answer; and creating, changing, versioning, validating or deleting
-  EliteA agents and pipelines (from files or on request).
+  or pipeline and using its answer; creating, changing, versioning, validating or deleting
+  EliteA agents and pipelines (from files or on request); EliteA credentials; and EliteA
+  toolkits: listing, creating, changing, testing or deleting them and attaching them to agents.
   Triggers: "which project are we in", "what agents do we have", "ask the … agent",
   "let the … agent do …", "run the … pipeline", "create an agent", "change the … agent's
   instructions/model", "new version of …", "validate this pipeline", "delete the … agent",
-  "EliteA", "my project".
+  "what toolkits do we have", "create a Jira toolkit", "give the … agent the … toolkit",
+  "which tools does … have", "EliteA", "my project".
 ---
 
 # EliteA via elitea-cli
@@ -117,7 +119,7 @@ the id only. Each one asks the user for permission when you run it: that is expe
   again without \`--dry-run\`. A file with only the changed fields works too: fields left out keep
   their value. \`--agent-version <name|id>\` targets a version other than the default one.
   Pipeline YAML only: \`elitea-cli pipelines update <pipeline> --yaml <file>\`.
-  \`update\` never changes toolkits (\`tools\`); say so if the user asks for that.
+  \`update\` never changes toolkits (\`tools\`): use \`agents toolkits add|remove\` (see Toolkits).
 - **Published version** ("can not be updated"): create a new version and change that one.
 - **Versions**: \`elitea-cli agents version create <agent> <new name> [--from <version>]\` copies a
   version; \`elitea-cli agents version default <agent> <version>\` makes it the default.
@@ -142,6 +144,46 @@ write one into a file or a command line. To create or change one, write the non-
 temp file and give the user the command to run themselves, with the secret from their environment:
 \`elitea-cli credentials create -f <file> --secret-env <field>=<ENV_VAR>\`. \`credentials test
 <cred>\` checks the connection (exit 1 = failed; show the reason).
+
+## Toolkits
+
+A toolkit is a configured integration (Jira, GitHub, an MCP server…) that agents use as tools.
+Reading needs no permission prompt:
+- \`elitea-cli toolkits list --json [--type <t>] [--search <text>] [--mcp]\` →
+  \`[{id, name, type, description, credential, selected_tools}]\`. Filter with the flags, never with
+  a pipe: \`--type github\` for a type (\`toolkits types\` lists them), \`--search\` for a name.
+- \`elitea-cli toolkits get <toolkit> -o json\` → its settings (secrets \`****\`) and
+  \`cli.tools[{name, selected}]\`; \`elitea-cli toolkits tools <toolkit> --json\` → only the tools.
+- \`elitea-cli toolkits types [--mcp] --json\` lists types; \`elitea-cli toolkits types <type> -o json\`
+  gives \`{credential_field, settings[{name, type, required, secret}], tools[{name}]}\`. Read it
+  before writing a toolkit file.
+
+**Create** (only when the user asks): write a temp file and run \`elitea-cli toolkits create -f
+<file>\`:
+\`\`\`yaml
+type: jira
+name: Jira EL
+credential: Jira EL          # a credential title from \`credentials list\`
+settings:
+  selected_tools: [search_using_jql, create_issue]   # names from \`toolkits types <type>\`
+\`\`\`
+Settings marked secret never go into the file: give the user the command with
+\`--secret-env <setting>=<ENV_VAR>\` to run themselves, as for credentials.
+**Change**: a file with only the fields to change, \`elitea-cli toolkits update <toolkit> -f <file>\`
+(settings left out, secrets included, keep their value; \`null\` clears a setting).
+**Run one tool** (\`toolkits test <toolkit> <tool> --args '<json>' --yes -o json\` → \`{ok, result,
+error}\`, exit 1 = the tool failed): it acts on the real service (it may create issues, push
+files…). Name the tool and its arguments to the user and get their OK in the conversation first;
+only then pass \`--yes\`. Read the tool's arguments from \`toolkits types <type> -o json\` (\`schema\`).
+**Delete**: only after the user confirmed this exact toolkit: \`elitea-cli toolkits delete <id>
+--yes\`. EliteA removes it from every agent that uses it, published versions too; say so first.
+
+**Attach to an agent** (pipelines name toolkits in their YAML instead):
+\`elitea-cli agents toolkits add <agent> <toolkit> [--tools a,b] [--agent-version <v>]\` attaches it
+with all its selected tools, or only those named; \`agents toolkits remove <agent> <toolkit>\`
+detaches it. Already attached → nothing changes; to change its tools, remove and add again with
+\`--tools\`. A published version cannot change: create a version (\`agents version create\`) and
+attach there. \`agents get <agent>\` shows the attached toolkits.
 
 ## Using the answer
 
@@ -183,6 +225,19 @@ description: List your EliteA projects and show the active one
 ---
 Run \`elitea-cli projects --json\` and \`elitea-cli status\`. Show the projects as a compact table
 (id, name) and mark the active project from \`status\`. Don't switch projects.
+`,
+  "toolkits.md": `---
+description: List EliteA toolkits in the active project, or the tools of one
+argument-hint: "[toolkit | search text] [--project <id|name>]"
+---
+List the EliteA toolkits. Arguments: $ARGUMENTS
+
+Without arguments run \`elitea-cli toolkits list --json\` and show a compact table: id, name, type,
+credential. If the arguments name one toolkit (an id or an exact name), run
+\`elitea-cli toolkits tools <toolkit> --json\` instead and show its tools, marking the selected
+ones. A toolkit type (jira, github…): add \`--type <type>\`; other text: \`--search "<text>"\`. If
+they name a project, add \`--project <id|name>\`. Run each command as is, without pipes. Don't
+change anything.
 `,
   "chat.md": `---
 description: Send a message to an EliteA agent and show its answer
@@ -238,7 +293,7 @@ export function sessionContext(opts: { url: string; projectId: number; projectNa
     `You are running inside elitea-cli, connected to EliteA (${opts.url}).`,
     `${opts.userName ? `User: ${opts.userName}. ` : ""}Active EliteA project: ${project}.`,
     "The user's EliteA agents and pipelines live in this project and run on the EliteA server.",
-    "Use the `elitea` skill (the `elitea-cli` command) for anything about EliteA projects, agents or pipelines: running, creating, changing or deleting them.",
+    "Use the `elitea` skill (the `elitea-cli` command) for anything about EliteA projects, agents, pipelines, credentials or toolkits: running, creating, changing or deleting them.",
   ].join("\n");
 }
 

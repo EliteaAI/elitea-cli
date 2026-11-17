@@ -25,6 +25,18 @@ import {
   updateCommand as credentialUpdateCommand,
 } from "./commands/credentials.js";
 import { collect } from "./commands/common.js";
+import {
+  addCommand as toolkitAddCommand,
+  createCommand as toolkitCreateCommand,
+  deleteCommand as toolkitDeleteCommand,
+  getCommand as toolkitGetCommand,
+  listCommand as toolkitListCommand,
+  removeCommand as toolkitRemoveCommand,
+  testCommand as toolkitTestCommand,
+  toolsCommand as toolkitToolsCommand,
+  typesCommand as toolkitTypesCommand,
+  updateCommand as toolkitUpdateCommand,
+} from "./commands/toolkits.js";
 import { getCommand, versionsCommand } from "./commands/inspect.js";
 import { runCommand } from "./commands/run.js";
 import { envAddCommand, envListCommand, envRemoveCommand, envUseCommand } from "./commands/env.js";
@@ -373,6 +385,47 @@ runOptions(
     process.exitCode = await runCommand("agent", query, message, opts);
   });
 
+const agentToolkits = agents
+  .command("toolkits")
+  .description("Attach toolkits to an agent version or detach them (pipelines name toolkits in their YAML)")
+  .enablePositionalOptions();
+
+const toolkitTarget = (cmd: Command) =>
+  cmd
+    .addOption(envOption())
+    .option("--agent-version <name|id>", "version to change (default: the default version)")
+    .option("-p, --project <id|name>", PROJECT_HELP)
+    .option("-o, --output <format>", "text, json or yaml");
+
+toolkitTarget(
+  agentToolkits
+    .command("add")
+    .argument("<agent>", "agent id or name")
+    .argument("<toolkit>", "toolkit id or name")
+    .description("Attach a toolkit to an agent version, with all its tools or the ones named"),
+)
+  .option("--tools <a,b>", "only these tools of the toolkit (default: all its selected tools)")
+  .addHelpText(
+    "after",
+    `
+To change the tools of an attached toolkit: remove it, then add it with --tools.
+
+Examples:
+  elitea-cli agents toolkits add "Release bot" "Jira EL" --tools search_using_jql,create_issue
+  elitea-cli agents toolkits add 42 115 --agent-version v2`,
+  )
+  .action(toolkitAddCommand);
+
+toolkitTarget(
+  agentToolkits
+    .command("remove")
+    .argument("<agent>", "agent id or name")
+    .argument("<toolkit>", "toolkit id or name")
+    .description("Detach a toolkit from an agent version"),
+)
+  .addHelpText("after", '\nExample:\n  elitea-cli agents toolkits remove "Release bot" "Jira EL"')
+  .action(toolkitRemoveCommand);
+
 agents
   .command("chat")
   .argument("[agent]", "agent id or name (interactive picker when omitted)")
@@ -511,6 +564,114 @@ credentialCommon(credentials.command("delete").argument("<credential>", "credent
   .option("-y, --yes", "don't ask for confirmation")
   .addHelpText("after", "\nExample:\n  elitea-cli credentials delete jira_el --yes")
   .action(credentialDeleteCommand);
+
+const toolkits = program
+  .command("toolkits")
+  .description("List, inspect, create, change, test and delete toolkits; secrets are never shown")
+  .addOption(envOption())
+  .enablePositionalOptions();
+
+const toolkitCommon = (cmd: Command) => cmd.addOption(envOption()).option("-p, --project <id|name>", PROJECT_HELP);
+
+toolkitCommon(toolkits.command("types").argument("[type]", "show this type's settings and tools").description("List the toolkit types the project can use, or one type's settings"))
+  .option("--mcp", "MCP server types")
+  .option("--all", "also types the web UI hides")
+  .option("-o, --output <format>", `${OUTPUT_HELP}; with a type, json/yaml give its settings schema`)
+  .option("--json", "same as -o json")
+  .addHelpText("after", "\nExamples:\n  elitea-cli toolkits types\n  elitea-cli toolkits types jira\n  elitea-cli toolkits types github -o json")
+  .action(toolkitTypesCommand);
+
+toolkitCommon(toolkits.command("list").description("List the project's toolkits, newest first"))
+  .option("--type <type>", "only toolkits of this type (repeatable)", collect)
+  .option("-s, --search <text>", "only toolkits whose name or description matches")
+  .option("--mcp", "MCP toolkits instead")
+  .option("-o, --output <format>", `${OUTPUT_HELP}; json/yaml: the toolkits with secrets as ****`)
+  .option("--json", "same as -o json")
+  .addHelpText("after", "\nExamples:\n  elitea-cli toolkits list --type jira\n  elitea-cli toolkits list -s release -o json")
+  .action(toolkitListCommand);
+
+toolkitCommon(toolkits.command("get").argument("<toolkit>", "toolkit id or name").description("Show a toolkit: settings (secrets as ****), credential and tools"))
+  .option("-o, --output <format>", `${OUTPUT_HELP}; json/yaml: the toolkit as EliteA returns it, secrets as ****`)
+  .option("--json", "same as -o json")
+  .addHelpText("after", '\nExample:\n  elitea-cli toolkits get "Jira EL" -o yaml > jira-toolkit.yaml')
+  .action(toolkitGetCommand);
+
+toolkitCommon(toolkits.command("tools").argument("<toolkit>", "toolkit id or name").description("List the tools a toolkit exposes and which are selected"))
+  .option("-o, --output <format>", OUTPUT_HELP)
+  .option("--json", "same as -o json")
+  .action(toolkitToolsCommand);
+
+const TOOLKIT_FILE_HELP = `
+The file uses EliteA's shape: {type, name, description, settings: {…}}. Name the credential with
+credential: "<title>" (this project's credentials first, then your personal ones, then shared
+ones). Leave secret settings out of the file; give them with --secret <setting> or
+--secret-env <setting>=<VAR>. selected_tools in settings picks the toolkit's tools.`;
+
+toolkitCommon(toolkits.command("create").description("Create a toolkit from a YAML or JSON file"))
+  .option("-f, --file <path>", "the toolkit; - reads stdin")
+  .option("--secret <setting>", SECRET_HELP, collect)
+  .option("--secret-env <setting=VAR>", SECRET_ENV_HELP, collect)
+  .option("-o, --output <format>", "text, json or yaml (secrets as ****)")
+  .addHelpText(
+    "after",
+    `${TOOLKIT_FILE_HELP}
+
+Example jira-toolkit.yaml:
+  type: jira
+  name: Jira EL
+  credential: Jira EL
+  settings:
+    selected_tools: [search_using_jql, create_issue]
+
+Examples:
+  elitea-cli toolkits create -f jira-toolkit.yaml
+  id=$(elitea-cli toolkits create -f jira-toolkit.yaml -q)`,
+  )
+  .action(toolkitCreateCommand);
+
+toolkitCommon(
+  toolkits
+    .command("update")
+    .argument("<toolkit>", "toolkit id or name")
+    .description("Change a toolkit from a file; settings and secrets left out keep their value"),
+)
+  .option("-f, --file <path>", "fields to change, in the create shape; - reads stdin")
+  .option("--secret <setting>", SECRET_HELP, collect)
+  .option("--secret-env <setting=VAR>", SECRET_ENV_HELP, collect)
+  .option("-o, --output <format>", "text, json or yaml (secrets as ****)")
+  .addHelpText("after", `${TOOLKIT_FILE_HELP} A setting set to null is cleared.\n\nExample:\n  elitea-cli toolkits update "Jira EL" -f jira-toolkit.yaml`)
+  .action(toolkitUpdateCommand);
+
+toolkitCommon(
+  toolkits
+    .command("test")
+    .argument("<toolkit>", "toolkit id or name")
+    .argument("<tool>", "tool name (see `toolkits tools`)")
+    .description("Run one tool of a toolkit once and print its result"),
+)
+  .option("--args <json>", "the tool's arguments as a JSON object")
+  .option("--args-file <path>", "the tool's arguments from a JSON file; - reads stdin")
+  .option("--timeout <seconds>", "stop waiting after this long, 1–900 (default 300)")
+  .option("-y, --yes", "don't ask before running (the tool acts on the real service)")
+  .option("-o, --output <format>", "text or json ({ok, result, error, tool, toolkit})")
+  .addHelpText(
+    "after",
+    `
+Exit codes: 0 the tool answered, 1 the tool failed, 2 no --yes outside a terminal, 6 unknown tool,
+8 timed out.
+
+Examples:
+  elitea-cli toolkits test "Jira EL" search_using_jql --args '{"jql": "project = EL", "limit": 5}'
+  elitea-cli toolkits test 115 get_issue --args-file args.json --yes -o json`,
+  )
+  .action(async (query: string, tool: string, opts) => {
+    process.exitCode = await toolkitTestCommand(query, tool, opts);
+  });
+
+toolkitCommon(toolkits.command("delete").argument("<toolkit>", "toolkit id or name").description("Delete a toolkit; agents that use it lose it"))
+  .option("-y, --yes", "don't ask for confirmation")
+  .addHelpText("after", "\nExample:\n  elitea-cli toolkits delete 115 --yes")
+  .action(toolkitDeleteCommand);
 
 program
   .command("launch")
