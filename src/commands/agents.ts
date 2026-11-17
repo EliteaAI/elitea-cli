@@ -40,10 +40,10 @@ export function formatAgents(agents: EliteaAgent[], columns = 120): string[] {
   ];
 }
 
-export function parseLimit(value: string | undefined): number | undefined {
+export function parseLimit(value: string | undefined, flag = "--limit"): number | undefined {
   if (value === undefined) return undefined;
   const n = Number(value);
-  if (!Number.isInteger(n) || n < 1) throw usageError(`--limit must be a positive whole number, got "${value}"`);
+  if (!Number.isInteger(n) || n < 1) throw usageError(`${flag} must be a positive whole number, got "${value}"`);
   return n;
 }
 

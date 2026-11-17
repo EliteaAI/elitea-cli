@@ -110,8 +110,13 @@ export interface EliteaTag {
 
 export interface ConversationParticipant {
   id: number;
+  /** user, application (agents and pipelines), dummy (the platform's own replies), toolkit, llm, skill… */
   entity_name: string;
   entity_meta?: { id?: number; project_id?: number };
+  /** Display data the platform keeps on the participant: `name`, or `user_name` for a user. */
+  meta?: { name?: string; user_name?: string; [key: string]: unknown };
+  /** For an agent: the version the chat runs (`version_id`), its variables… */
+  entity_settings?: { version_id?: number; agent_type?: string; [key: string]: unknown };
 }
 
 export interface AgentConversation {
@@ -119,6 +124,27 @@ export interface AgentConversation {
   uuid: string;
   name: string;
   participants: ConversationParticipant[];
+  is_private?: boolean;
+  author_id?: number;
+  created_at?: string;
+  updated_at?: string | null;
+}
+
+/** One row of the chat list (`conversations/prompt_lib`): no participants, only their counts. */
+export interface ConversationRow {
+  id: number;
+  uuid: string;
+  name: string;
+  is_private: boolean;
+  author_id: number;
+  created_at: string;
+  updated_at?: string | null;
+  participants_count?: number;
+  users_count?: number;
+  message_groups_count?: number;
+  /** A reply in it is still being written (EL-7385). */
+  has_running_task?: boolean;
+  [key: string]: unknown;
 }
 
 export interface MessageGroup {
@@ -126,6 +152,10 @@ export interface MessageGroup {
   uuid: string;
   author_participant_id: number;
   is_streaming: boolean;
+  /** Naive UTC, e.g. `2026-11-13T09:33:06.737438`. */
+  created_at?: string;
+  /** Set once the run of a reply was dispatched. */
+  task_id?: string | null;
   message_items: Array<{ item_type: string; item_details?: { content?: string } }>;
   /** is_error/error: the run failed; hitl_interrupt(s)/authorization_requests: paused for the user. */
   meta?: {
@@ -703,10 +733,40 @@ export class EliteaClient {
     } });
   }
 
+  /**
+   * One conversation with its participants. An id that does not exist, is in another project or
+   * is another user's private chat is a 400 "No such conversation with id N" (not 404).
+   */
   getConversation(projectId: number, conversationId: number): Promise<AgentConversation> {
     return this.get<AgentConversation>(
       `/api/v2/elitea_core/conversation/prompt_lib/${projectId}/${conversationId}?messages_limit=0`,
     );
+  }
+
+  /**
+   * The user's chat list, as the web UI shows it: public chats of the project and private ones the
+   * user takes part in (all of them for a project admin), most recently updated first. Pages of
+   * at most 100 (the server's cap) are read until `limit` rows.
+   */
+  async listConversations(projectId: number, opts: { query?: string; limit: number }): Promise<{ total: number; rows: ConversationRow[] }> {
+    const PAGE = 100;
+    const rows: ConversationRow[] = [];
+    let total = 0;
+    for (;;) {
+      const limit = Math.min(PAGE, opts.limit - rows.length);
+      if (limit <= 0) return { total, rows };
+      const page = await this.request<{ total: number; rows: ConversationRow[] }>("GET", `/api/v2/elitea_core/conversations/prompt_lib/${projectId}`, {
+        query: { query: opts.query || undefined, limit, offset: rows.length, sort_by: "updated_at", sort_order: "desc" },
+      });
+      total = page.total;
+      rows.push(...page.rows);
+      if (page.rows.length === 0 || rows.length >= total) return { total, rows };
+    }
+  }
+
+  /** 204. Only the author or a project admin may (403 otherwise); the chat's skill-script files go with it. */
+  async deleteConversation(projectId: number, conversationId: number): Promise<void> {
+    await this.request("DELETE", `/api/v2/elitea_core/conversation/prompt_lib/${projectId}/${conversationId}`);
   }
 
   /** Start the agent's reply in the background; poll `recentMessages` for it. */
@@ -723,10 +783,17 @@ export class EliteaClient {
 
   /** Newest message groups first. Takes the numeric conversation id (a uuid gives HTTP 500). */
   async recentMessages(projectId: number, conversationId: number, limit = 5): Promise<MessageGroup[]> {
-    const page = await this.get<{ rows: MessageGroup[] }>(
-      `/api/v2/elitea_core/messages/prompt_lib/${projectId}/${conversationId}?limit=${limit}`,
-    );
-    return page.rows;
+    return (await this.listMessages(projectId, conversationId, { limit })).rows;
+  }
+
+  /**
+   * One page of message groups, newest first. An unknown id is an empty page, not an error:
+   * check the conversation with `getConversation` first.
+   */
+  listMessages(projectId: number, conversationId: number, page: { limit: number; offset?: number }): Promise<{ total: number; rows: MessageGroup[] }> {
+    return this.request("GET", `/api/v2/elitea_core/messages/prompt_lib/${projectId}/${conversationId}`, {
+      query: { limit: page.limit, offset: page.offset || undefined },
+    });
   }
 }
 

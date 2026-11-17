@@ -35,12 +35,13 @@ description: >-
   projects, agents or pipelines; showing an agent's configuration; running an EliteA agent
   or pipeline and using its answer; creating, changing, versioning, validating or deleting
   EliteA agents and pipelines (from files or on request); EliteA credentials; and EliteA
-  toolkits: listing, creating, changing, testing or deleting them and attaching them to agents.
+  toolkits: listing, creating, changing, testing or deleting them and attaching them to agents;
+  EliteA chats: listing them, reading one, continuing one or deleting them.
   Triggers: "which project are we in", "what agents do we have", "ask the … agent",
   "let the … agent do …", "run the … pipeline", "create an agent", "change the … agent's
   instructions/model", "new version of …", "validate this pipeline", "delete the … agent",
   "what toolkits do we have", "create a Jira toolkit", "give the … agent the … toolkit",
-  "which tools does … have", "EliteA", "my project".
+  "which tools does … have", "my chats", "what did the … agent answer", "EliteA", "my project".
 ---
 
 # EliteA via elitea-cli
@@ -184,6 +185,17 @@ with all its selected tools, or only those named; \`agents toolkits remove <agen
 detaches it. Already attached → nothing changes; to change its tools, remove and add again with
 \`--tools\`. A published version cannot change: create a version (\`agents version create\`) and
 attach there. \`agents get <agent>\` shows the attached toolkits.
+
+## Chats
+
+Every run creates a chat; chats take the **numeric** id (\`conversation_id\` of a run).
+- \`elitea-cli chats list --json [--search <text>] [--limit N]\` → \`[{id, name, agents, updated_at,
+  running}]\`, most recently updated first.
+- \`elitea-cli chats show <id> -o json [--last N | --all]\` → \`[{author, created_at, text,
+  is_streaming}]\`, oldest first (default the last 20). Use it to pick up a \`--no-wait\` run.
+- \`elitea-cli chats send <id> "<message>" -o json [--to <agent>]\` continues a chat: the same output
+  and exit codes as \`agents run\`. Exit 6 "still running" → wait, then \`chats show\`.
+- \`elitea-cli chats delete <id> --yes\`: only after the user confirmed these exact chats.
 
 ## Using the answer
 

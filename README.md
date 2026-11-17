@@ -46,6 +46,10 @@ elitea-cli launch claude    # Claude Code
 | `elitea-cli toolkits test <toolkit> <tool>` | Run one tool once and print its result |
 | `elitea-cli toolkits delete <toolkit>` | Delete a toolkit (agents that use it lose it) |
 | `elitea-cli agents toolkits add\|remove <agent> <toolkit>` | Attach a toolkit to an agent version, or detach it |
+| `elitea-cli chats list` | Your chats in the project (the web UI's chat list), newest first |
+| `elitea-cli chats show <id>` | A chat's messages, oldest first, in full |
+| `elitea-cli chats send <id> [message]` | Send a message to an existing chat, as `agents run` does |
+| `elitea-cli chats delete <id>…` | Delete chats |
 | `elitea-cli launch claude` | Start Claude Code wired to EliteA |
 | `elitea-cli api <METHOD> <path>` | Call any EliteA API endpoint with the stored token |
 | `elitea-cli config list\|get\|set\|unset` | Show and change CLI settings (output, color, timeout) |
@@ -576,6 +580,56 @@ tools)`. Already attached → said, exit 0, nothing changed; to change the tools
 again. A tool the toolkit doesn't have → exit 6. `remove` of a toolkit that is not attached → exit 5.
 A published version cannot change (exit 6, create a version first); if someone attached or detached
 it in between → exit 6. Pipelines name their toolkits in the pipeline YAML (`pipelines update --yaml`).
+
+## Chats
+
+Every `agents run`, `pipelines run` and `agents chat` creates a private chat, which also shows in
+the EliteA web UI. The `chats` commands take the **numeric** chat id that `chats list` shows (and
+that `run --no-wait -q` prints); a uuid exits 2 without sending a request.
+
+```sh
+id=$(elitea-cli agents run Reviewer -f diff.txt --no-wait -q)
+elitea-cli chats show "$id" --last 1                     # later: the answer
+elitea-cli chats send "$id" "And the tests?" -o json | jq -r .answer
+elitea-cli chats list -s review
+elitea-cli chats delete 1234 1235 --yes
+```
+
+### `chats list`
+
+The chat list of the web UI: public chats of the project and the private ones you are in (all
+of them for a project admin), most recently updated first. Columns: `ID NAME PARTICIPANTS
+UPDATED RUNNING`: `PARTICIPANTS` are the agents in it, `UPDATED` is local time, `RUNNING` is
+`yes` while a reply is being written. `--search <text>` matches the name, `--limit N` (default
+20) caps the rows. `-o json|yaml`: `[{id, uuid, name, agents[{id, name, project_id}], created_at,
+updated_at, running, private, author_id, messages}]`. No chats → `No chats found` on stderr, `[]`.
+
+### `chats show <id>`
+
+Prints each message as `<author> (<YYYY-MM-DD HH:MM>):` and its full text, oldest first: the last
+20 by default, `--last N`, or `--all` (not both). A reply still being written is marked
+`(still running)`; one whose run died is `(never finished)`. A failed reply shows its error's last
+line. `-o json|yaml`: `[{id, author, author_type, created_at, text, is_streaming, error?}]`. A chat
+that does not exist, is in another project or is not visible to you → `Chat not found`, exit 5.
+
+### `chats send <id> [message]`
+
+`agents run` on an existing chat: the same input (`[message]`, `-f <file>`, `-f -`), `--timeout`,
+`--no-wait`, output, JSON shape and exit codes (see
+[Running from scripts](#running-agents-and-pipelines-from-scripts)). A chat with several agents
+needs `--to <agent>` (name or id); a chat without an agent exits 2. A chat whose reply is still
+being written is refused (`Chat is still running…`, exit 6) and nothing is sent. Two `send`s
+started at the same moment can both pass that check: EliteA itself does not refuse the second.
+`agents chat <agent> -c <id> "<message>"` sends the same request.
+
+### `chats delete <id>…`
+
+Asks `Delete chat '<name>' (<id>)? Files created by skill scripts in it are deleted too.` (or,
+while it runs, `Chat '<name>' (<id>) is still running. Delete it anyway?…`); `--yes` skips it and
+is required without a terminal. Several ids are asked about once; a failure on one does not stop
+the others, and the summary prints `Deleted: …` and `Failed: <id> (<reason>)`. Exit 0 when all
+were deleted, else the code of the first failure. Only the chat's author (or a project admin) may
+delete it: others get 403, exit 4.
 
 ## Running agents and pipelines from scripts
 
