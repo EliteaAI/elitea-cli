@@ -241,7 +241,7 @@ describe("login (AC-5…AC-11)", () => {
       "Environment: a.test",
       "Project: Personal (4)",
       `Token saved to ${join(home, "credentials.json")}`,
-      "\nNext: `elitea-cli launch claude`",
+      "\nNext: `elitea-cli launch claude` or `elitea-cli launch codex`",
     ]);
     const config = await loadConfig();
     expect(config.active).toBe("a.test");

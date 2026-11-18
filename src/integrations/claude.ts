@@ -18,6 +18,14 @@ export const claude: Integration = {
     fallbacks: [join(homedir(), ".local", "bin", "claude"), join(homedir(), ".claude", "local", "claude")],
   },
   installHint: "curl -fsSL https://claude.ai/install.sh | bash",
+  // Tested with 2.1.284 and 2.1.285; --plugin-dir and modelPicker settings need a recent 2.1.
+  minVersion: "2.1.284",
+  versionPattern: /(\d+\.\d+\.\d+)/,
+  probe: {
+    path: "/llm/v1/messages",
+    headers: { "anthropic-version": "2023-06-01" },
+    body: (model) => ({ model, max_tokens: 1, messages: [{ role: "user", content: "ping" }] }),
+  },
 
   async prepare(ctx) {
     const main = ctx.model.name;
@@ -40,6 +48,11 @@ export const claude: Integration = {
     };
     if (ctx.model.context_window && ctx.model.context_window < CLAUDE_DEFAULT_CONTEXT) {
       env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = String(ctx.model.context_window);
+    }
+    // Claude Code (2.1.285+) knows no EliteA model names: without the real window it caps the session
+    // at 200k and prints a long "isn't described by this version's model catalog" warning.
+    if (ctx.model.context_window && process.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS === undefined) {
+      env.CLAUDE_CODE_MAX_CONTEXT_TOKENS = String(ctx.model.context_window);
     }
     // EliteA doesn't implement the auto-mode classifier endpoint; respect an explicit user choice.
     if (process.env.CLAUDE_CODE_AUTO_MODE_SERVER === undefined) env.CLAUDE_CODE_AUTO_MODE_SERVER = "0";

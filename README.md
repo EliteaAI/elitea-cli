@@ -1,14 +1,34 @@
 # elitea-cli
 
-Run Claude Code on top of [EliteA](https://next.elitea.ai) —
-like `ollama launch`, but the models come from your EliteA project.
+Run Claude Code or Codex in any folder on top of [EliteA](https://next.elitea.ai): the models and
+the budget come from your EliteA project, so you need no API key of your own. Like
+`ollama launch`, but for EliteA.
+
+## Quick start
 
 ```sh
 npm install -g @eliteaai/elitea-cli
-
-elitea-cli login            # enter your EliteA server URL, paste a personal access token, pick a project
-elitea-cli launch claude    # Claude Code
+elitea-cli launch claude     # or: elitea-cli launch codex
 ```
+
+The first `launch` logs you in when needed: it asks for your EliteA server URL, opens the token
+page so you can paste a personal access token, lets you pick a project and a model, then starts
+the agent. Later launches start at once with the same choices. `elitea-cli login` does the same
+step on its own.
+
+```
+$ elitea-cli launch codex
+Not logged in.
+EliteA server URL: https://next.elitea.ai
+Personal access token: ********
+Project: Elitea Dev
+Model for Codex CLI: every request of the session › GPT-5.4
+Codex gets EliteA models only; EliteA agents, pipelines and chats are available in Claude Code (elitea-cli launch claude).
+Launching Codex CLI with GPT-5.4 (environment next.elitea.ai, project 12)
+```
+
+You need Node.js 20+, and [Claude Code](https://docs.claude.com/en/docs/claude-code) 2.1.284+ or
+[Codex CLI](https://github.com/openai/codex) 0.139.0+ (`npm install -g @openai/codex`).
 
 ## Commands at a glance
 
@@ -50,7 +70,7 @@ elitea-cli launch claude    # Claude Code
 | `elitea-cli chats show <id>` | A chat's messages, oldest first, in full |
 | `elitea-cli chats send <id> [message]` | Send a message to an existing chat, as `agents run` does |
 | `elitea-cli chats delete <id>…` | Delete chats |
-| `elitea-cli launch claude` | Start Claude Code wired to EliteA |
+| `elitea-cli launch claude\|codex` | Start Claude Code or Codex with EliteA as the model provider (`--check`: test the setup) |
 | `elitea-cli api <METHOD> <path>` | Call any EliteA API endpoint with the stored token |
 | `elitea-cli config list\|get\|set\|unset` | Show and change CLI settings (output, color, timeout) |
 | `elitea-cli completion bash\|zsh\|fish\|powershell` | Print a shell completion script |
@@ -754,25 +774,98 @@ elitea-cli completion fish > ~/.config/fish/completions/elitea-cli.fish         
 elitea-cli completion powershell >> $PROFILE                                         # PowerShell
 ```
 
-## Launching Claude Code
+## Launching Claude Code and Codex
 
 ```sh
 elitea-cli launch claude                         # pick models on first run, then start
+elitea-cli launch codex                          # the same for Codex
 elitea-cli launch claude -m <model>              # use this model (saved for next time)
 elitea-cli launch claude --pick                  # choose models again
+elitea-cli launch codex -p "Team project"        # another project for this launch only
+elitea-cli launch claude --check                 # test token, models and one model call; don't start
 elitea-cli launch claude --print                 # show the env and command, don't start
-elitea-cli launch claude -- -p "explain this repo"   # everything after -- goes to claude
+elitea-cli launch claude -- -p "explain this repo"       # everything after -- goes to the agent
+elitea-cli launch codex -- exec "fix the failing test"
 ```
 
 | Option | Meaning |
 |---|---|
 | `-m, --model <name>` | Model to use (saved for next time) |
-| `--fast-model <name>` | Small model for Claude Code's background tasks |
+| `--fast-model <name>` | Small model for Claude Code's background tasks (the haiku slot) |
 | `--pick` | Choose models again interactively |
-| `--print` | Print the environment and command instead of launching (token redacted) |
-| `-- <args>` | Passed to `claude` unchanged |
+| `-p, --project <id\|name>` | Use this project for this launch only; the active project and its model choices stay |
+| `--env <name>` | Use this saved environment (server) for this launch only |
+| `--check` | Check the token and the project's models, then make one tiny model call through `/llm` in the agent's own format: `OK <model> <ms>` or the error, exit 0 or 1. Starts nothing; for support and CI smoke tests |
+| `--print` | Print the environment and command instead of launching (token redacted); saves nothing |
+| `-- <args>` | Passed to the agent unchanged |
 
-The model you choose is remembered per agent.
+The model you choose is remembered per agent and project. elitea-cli never writes to `~/.claude`,
+`~/.codex` or your shell profile: everything is passed to the agent for this run only, so your own
+Claude Code or Codex setup works unchanged after the session.
+
+### Claude Code
+
+What you get: Claude Code on your project's models (`/model` lists only them), the opus and sonnet
+slots and subagents on the main model, the haiku slot on the fast model, and the EliteA context:
+the `elitea` skill, `/elitea:*` commands, your user and project in the system prompt, so Claude can
+list, run, create and change your EliteA agents, pipelines, chats, toolkits and credentials (see
+[EliteA agents inside Claude Code](#elitea-agents-inside-claude-code)).
+
+What you don't get: claude.ai connectors (Claude Code says they are disabled while an EliteA
+token is in use) and auto mode, which EliteA does not implement.
+
+### Codex
+
+What you get: Codex CLI on your project's models through EliteA's `/llm/v1` (responses API), with
+its tools, sandbox and file edits working as usual. Every model of the project is offered, the
+OpenAI ones first: EliteA translates the format, so Claude models work in Codex too.
+
+What you don't get: the EliteA context. Codex knows nothing about your EliteA agents, pipelines or
+chats; use `elitea-cli launch claude` for that, or run `elitea-cli …` commands yourself. Codex's
+image generation tool is turned off (EliteA's deployments refuse it).
+
+### Before the agent starts
+
+`launch` checks, in this order, and starts nothing when one fails:
+
+| Check | Message | Exit |
+|---|---|---|
+| The agent is installed | `<agent> is not installed. Install it with: …` | 1 |
+| It is the tested version or newer (Claude Code 2.1.284, Codex 0.139.0) | `<agent> <v> is older than the oldest tested version …` | 1 |
+| You are logged in | In a terminal: the login flow, then the launch goes on. Otherwise: `Not logged in — run elitea-cli login or set ELITEA_CLI_URL and ELITEA_CLI_TOKEN` | 3 |
+| The token still works | `Your ELITEA token for <environment> has expired — run elitea-cli login` | 3 |
+| The project has models | `No models in project <id> work with <agent>. Ask your project admin to add a model.` | 1 |
+| `-m` / `-p` name something that exists | `Model "<m>" is not available…` / `Project "<p>" not found…` | 5 |
+
+Once the agent runs, `launch` exits with the agent's own exit code.
+
+### Errors during a session
+
+The agent shows these itself, as EliteA's `/llm` gateway answers them:
+
+| What happened | `/llm` answers | What to do |
+|---|---|---|
+| Token expired or revoked | 401 `auth_error` | `elitea-cli login`, then launch again |
+| Model removed from the project, or not available to it | 403 `team_model_access_denied` | `elitea-cli launch <agent> --pick` |
+| Your role or the token's scope doesn't allow the project | 403 | Ask your project admin, or log in with another token |
+| Project or member budget used up | 429 `budget_exceeded` | Ask your project admin to raise the budget |
+| Rate limit | 429 | Wait and retry; the agent usually retries by itself |
+
+`elitea-cli launch <agent> --check` runs the same call the agent makes and prints which of these
+you are hitting.
+
+### In CI and scripts
+
+No saved login is needed: set the server and token, name the model, and pass the agent's
+non-interactive arguments after `--`. Nothing is prompted and nothing is written to disk; the
+personal project is used unless `ELITEA_CLI_PROJECT` names another.
+
+```sh
+export ELITEA_CLI_URL=https://next.elitea.ai ELITEA_CLI_TOKEN="$ELITEA_PAT" ELITEA_CLI_PROJECT=12
+elitea-cli launch claude --check -m global.anthropic.claude-sonnet-5-5       # smoke test
+elitea-cli launch claude -m global.anthropic.claude-sonnet-5-5 -- -p "Summarize the changes in this PR"
+elitea-cli launch codex -m global.openai.gpt-5.6-terra -- exec --sandbox workspace-write "fix the failing test"
+```
 
 ## Environments
 
@@ -799,6 +892,10 @@ In CI, no saved config is needed: `ELITEA_CLI_URL=https://<your-server> ELITEA_C
 - **Claude Code** gets environment variables: `ANTHROPIC_BASE_URL=<eliteA>/llm`, bearer token,
   `X-Project-Id` header, and your models for the opus/sonnet/haiku slots. It also gets the EliteA
   context (below) through command-line flags.
+- **Codex** gets `-c` overrides only: a model provider pointing at `<eliteA>/llm/v1` (responses
+  API) with the bearer token from an environment variable and the `X-Project-Id` header, and a model
+  catalog of your project's models built from the installed Codex's own (written to
+  `~/.elitea-cli/codex-models.json`). `~/.codex/config.toml` is never read for this or changed.
 
 The token is stored in the OS keychain (falls back to `~/.elitea-cli/credentials.json`, mode 0600).
 

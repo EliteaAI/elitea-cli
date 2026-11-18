@@ -38,5 +38,13 @@ export interface Integration {
   /** Executable name plus well-known install locations outside PATH. */
   binary: { name: string; fallbacks: string[] };
   installHint: string;
+  /** Oldest agent version tested with elitea-cli (AC-14); an older one is refused before launching. */
+  minVersion: string;
+  /** Reads the version from `<bin> --version` output, e.g. "2.1.285 (Claude Code)" or "codex-cli 0.169.0". */
+  versionPattern: RegExp;
+  /** One line printed before the agent starts: what it gets from EliteA and what not (AC-2). */
+  launchNote?: string;
+  /** `launch --check`: the smallest call the agent's own API format makes through /llm (AC-12). */
+  probe: { path: string; body: (model: string) => Record<string, unknown>; headers?: Record<string, string> };
   prepare(ctx: LaunchContext): Promise<LaunchSpec>;
 }
