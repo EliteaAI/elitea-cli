@@ -381,7 +381,16 @@ describe("update (AC-8…AC-9, AC-13, AC-14, AC-22)", () => {
   it("pipelines update --yaml changes only the instructions of the version (AC-9)", async () => {
     const yaml = await file("p.yaml", "entry_point: b\nnodes:\n  - id: b\n");
     await updateCommand("pipeline", "Notes", { yaml });
-    expect(writes()[0]!.body).toEqual({ name: "base", agent_type: "pipeline", instructions: "entry_point: b\nnodes:\n  - id: b\n" });
+    expect(writes().map((c) => c.path)[0]).toBe(`${BASE}/validate_pipeline/prompt_lib/${P}`);
+    expect(writes()[1]!.body).toEqual({ name: "base", agent_type: "pipeline", instructions: "entry_point: b\nnodes:\n  - id: b\n" });
+  });
+
+  it("pipelines update validates the YAML first: errors → exit 6, nothing saved", async () => {
+    w.validation = { valid: false, errors: [{ code: "unknown_entrypoint", node_id: null, field: "entry_point", message: "no such node", severity: "error" }], warnings: [] };
+    const yaml = await file("p.yaml", "entry_point: x\nnodes:\n  - id: b\n");
+    expect(exitCodeOf(await failure(updateCommand("pipeline", "Notes", { yaml })))).toBe(EXIT.conflict);
+    expect(writes().map((c) => c.path)).toEqual([`${BASE}/validate_pipeline/prompt_lib/${P}`]);
+    expect(errors).toContain("ERROR entry_point [unknown_entrypoint]: no such node");
   });
 
   it("pipelines update refuses a classic agent (exit 5)", async () => {

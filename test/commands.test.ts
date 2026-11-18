@@ -100,6 +100,11 @@ describe("resolveIn", () => {
     expect(() => resolveIn(apps, "nope", "agent")).toThrow('Agent "nope" not found — run `elitea-cli agents`');
     expect(() => resolveIn(apps, "release", "agent")).toThrow(/matches several: Release notes \(2\), Release checker \(3\)/);
     expect(exitOf(() => resolveIn(apps, "nope", "agent"))).toBe(EXIT.notFound);
+    // EliteA allows two items with the same name: an exact name can be ambiguous too (story 02 AC-21a).
+    const twins = [...apps, { id: 99, name: "Code reviewer", agent_type: "openai" }];
+    expect(() => resolveIn(twins, "Code reviewer", "agent")).toThrow("matches several: Code reviewer (1), Code reviewer (99)");
+    expect(exitOf(() => resolveIn(twins, "Code reviewer", "agent"))).toBe(EXIT.notFound);
+    expect(resolveIn(twins, "99", "agent").id).toBe(99);
     expect(() => resolveIn(apps, "nope", "pipeline")).toThrow("run `elitea-cli pipelines list`");
   });
 
