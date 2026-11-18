@@ -238,6 +238,13 @@ export async function updateCommand(kind: ItemKind, query: string, opts: Authori
     console.error("No changes");
     return;
   }
+  // Same check as `edit` (AC-12): EliteA's PUT saves pipeline YAML with errors (seen on dev.elitea.ai
+  // 2026-11-18), so validate first; warnings alone don't block the save.
+  if (kind === "pipeline" && typeof changes.instructions === "string") {
+    const result = await client.validatePipeline(projectId, changes.instructions);
+    if (result.errors?.length || result.warnings?.length) for (const line of formatValidation(result)) console.error(line);
+    if (!result.valid) throw new CliError("The pipeline YAML has errors; nothing saved", EXIT.conflict);
+  }
   await ensureUnchanged(client, projectId, details, summary, current.instructions_sha256);
   const updated = await sendUpdate(client, projectId, kind, details, summary, current, changes);
   report(format, updated, updated.id ?? summary.id, `Updated ${where(details, summary)}`);

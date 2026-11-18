@@ -8,16 +8,29 @@ export type ItemKind = "agent" | "pipeline";
 
 export const isPipeline = (a: Pick<EliteaAgent, "agent_type">) => a.agent_type === "pipeline";
 
-/** Match by id, then exact name, then case-insensitive name; a unique substring match also counts. */
-export function findAgent(agents: EliteaAgent[], query: string): EliteaAgent | undefined {
-  const q = query.trim().toLowerCase();
-  const exact =
-    agents.find((a) => String(a.id) === query.trim()) ??
-    agents.find((a) => a.name === query) ??
-    agents.find((a) => a.name.toLowerCase() === q);
-  if (exact) return exact;
-  const partial = agents.filter((a) => a.name.toLowerCase().includes(q));
-  return partial.length === 1 ? partial[0] : undefined;
+/**
+ * Every item of the first rule that matches anything: id, then exact name, then case-insensitive
+ * name, then a substring. Several hits = ambiguous (story 02 AC-21a): EliteA allows two agents
+ * with the same name, so an exact name may still match more than one.
+ */
+export function findAgents<T extends Pick<EliteaAgent, "id" | "name">>(agents: T[], query: string): T[] {
+  const trimmed = query.trim();
+  const q = trimmed.toLowerCase();
+  for (const match of [
+    (a: T) => String(a.id) === trimmed,
+    (a: T) => a.name === query,
+    (a: T) => a.name.toLowerCase() === q,
+  ]) {
+    const hits = agents.filter(match);
+    if (hits.length) return hits;
+  }
+  return agents.filter((a) => a.name.toLowerCase().includes(q));
+}
+
+/** The one item `query` names, or undefined when it names none or several. */
+export function findAgent<T extends Pick<EliteaAgent, "id" | "name">>(agents: T[], query: string): T | undefined {
+  const hits = findAgents(agents, query);
+  return hits.length === 1 ? hits[0] : undefined;
 }
 
 export async function pickAgent(agents: EliteaAgent[]): Promise<EliteaAgent> {
@@ -41,10 +54,10 @@ const label = (kind: ItemKind) => (kind === "pipeline" ? "Pipeline" : "Agent");
  * `pipelines …` given a classic agent exits 5 too.
  */
 export function resolveIn(agents: EliteaAgent[], query: string, kind: ItemKind): EliteaAgent {
-  const agent = findAgent(agents, query);
+  const hits = findAgents(agents, query);
+  const agent = hits.length === 1 ? hits[0] : undefined;
   if (!agent) {
-    const close = agents.filter((a) => a.name.toLowerCase().includes(query.toLowerCase()));
-    const hint = close.length > 1 ? `matches several: ${close.map((a) => `${a.name} (${a.id})`).join(", ")}` : "not found";
+    const hint = hits.length > 1 ? `matches several: ${hits.map((a) => `${a.name} (${a.id})`).join(", ")}` : "not found";
     throw notFoundError(`${label(kind)} "${query}" ${hint} — run \`${listHint(kind)}\``);
   }
   if (kind === "pipeline" && !isPipeline(agent)) {
