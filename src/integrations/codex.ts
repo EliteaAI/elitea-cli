@@ -110,6 +110,15 @@ export const codex: Integration = {
   usesFastModel: false,
   binary: { name: "codex", fallbacks: [join(homedir(), ".local", "bin", "codex")] },
   installHint: "npm install -g @openai/codex",
+  // Tested with 0.139.0 and 0.169.0; older releases lack `debug models --bundled` / model_catalog_json.
+  minVersion: "0.139.0",
+  versionPattern: /(\d+\.\d+\.\d+)/,
+  launchNote: "Codex gets EliteA models only; EliteA agents, pipelines and chats are available in Claude Code (elitea-cli launch claude).",
+  probe: {
+    path: "/llm/v1/responses",
+    // The responses API's smallest allowed output.
+    body: (model) => ({ model, input: "ping", max_output_tokens: 16 }),
+  },
 
   async prepare(ctx) {
     const catalog = buildCodexCatalog(pickTemplate(await bundledCatalog(ctx.bin)), ctx.catalog.items);

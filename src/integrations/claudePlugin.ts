@@ -305,7 +305,7 @@ export function sessionContext(opts: { url: string; projectId: number; projectNa
     `You are running inside elitea-cli, connected to EliteA (${opts.url}).`,
     `${opts.userName ? `User: ${opts.userName}. ` : ""}Active EliteA project: ${project}.`,
     "The user's EliteA agents and pipelines live in this project and run on the EliteA server.",
-    "Use the `elitea` skill (the `elitea-cli` command) for anything about EliteA projects, agents, pipelines, credentials or toolkits: running, creating, changing or deleting them.",
+    "Use the `elitea` skill (the `elitea-cli` command) for anything about EliteA projects, agents, pipelines, chats, credentials or toolkits: running, creating, changing or deleting them.",
   ].join("\n");
 }
 

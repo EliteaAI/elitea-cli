@@ -733,14 +733,33 @@ chatCommon(chats.command("delete").argument("<id...>", "numeric chat ids").descr
 
 program
   .command("launch")
-  .argument("[integration]", "claude")
+  .argument("[integration]", "claude or codex")
   .argument("[args...]", "arguments for the agent, after --")
-  .description("Launch an agent wired to EliteA")
+  .description("Start Claude Code or Codex with EliteA as the model provider (your project's models and budget)")
   .addOption(envOption())
+  .option("-p, --project <id|name>", "use this project for this launch only (the active one stays)")
   .option("-m, --model <name>", "model to use (saved for next time)")
   .option("--fast-model <name>", "small model for background tasks (Claude Code)")
   .option("--pick", "choose models again interactively")
-  .option("--print", "print the environment and command instead of launching")
+  .option("--print", "print the environment and command instead of launching (token redacted, nothing saved)")
+  .option("--check", "check the token, the models and one small model call, then exit without launching")
+  .addHelpText(
+    "after",
+    `
+Claude Code also gets EliteA agents, pipelines and chats (the elitea skill and /elitea:* commands).
+Codex gets EliteA models only.
+
+Examples:
+  elitea-cli launch claude
+  elitea-cli launch codex -m global.openai.gpt-5.6-terra
+  elitea-cli launch claude -- -p "explain this repo"
+  elitea-cli launch codex -- exec "fix the failing test"
+  elitea-cli launch claude --check
+
+Exit codes: the agent's own exit code once it started; before that 1 (not installed, too old,
+no models, --check failed), 2 usage, 3 not logged in or the token expired, 4 forbidden,
+5 unknown model or project.`,
+  )
   .action(async (name: string | undefined, args: string[], opts) => {
     process.exitCode = await launchCommand(name, args, opts);
   });

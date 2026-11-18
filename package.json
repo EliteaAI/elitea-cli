@@ -43,6 +43,8 @@
     "elitea-cli:chat-send": "tsup --silent && npm run -s elitea-cli -- chats send",
     "elitea-cli:chat-delete": "tsup --silent && npm run -s elitea-cli -- chats delete",
     "elitea-cli:claude": "tsup --silent && npm run -s elitea-cli -- launch claude",
+    "elitea-cli:codex": "tsup --silent && npm run -s elitea-cli -- launch codex",
+    "elitea-cli:check": "tsup --silent && npm run -s elitea-cli -- launch claude --check && npm run -s elitea-cli -- launch codex --check",
     "elitea-cli:reset": "rm -rf /tmp/elitea-cli-home",
     "prepublishOnly": "npm test && npm run typecheck && npm run build"
   },

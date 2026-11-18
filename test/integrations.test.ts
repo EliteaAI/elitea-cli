@@ -1,7 +1,7 @@
 import { ELITEA_PERMISSIONS } from "../src/integrations/claudePlugin.js";
 import { afterEach, describe, expect, it } from "vitest";
 import { claude } from "../src/integrations/claude.js";
-import { buildCodexCatalog, codexArgs, pickTemplate } from "../src/integrations/codex.js";
+import { buildCodexCatalog, codex, codexArgs, pickTemplate } from "../src/integrations/codex.js";
 import { findIntegration } from "../src/integrations/registry.js";
 import type { LaunchContext } from "../src/integrations/types.js";
 import { catalog, modelNamed } from "./fixtures.js";
@@ -24,7 +24,8 @@ describe("registry", () => {
   it("finds integrations by name and alias", () => {
     expect(findIntegration("claude")?.name).toBe("claude");
     expect(findIntegration("Claude-Code")?.name).toBe("claude");
-    expect(findIntegration("codex")).toBeUndefined();
+    expect(findIntegration("codex")?.name).toBe("codex");
+    expect(findIntegration("codex-cli")?.name).toBe("codex");
     expect(findIntegration("vim")).toBeUndefined();
   });
 });
@@ -69,6 +70,16 @@ describe("claude", () => {
     expect((await claude.prepare(ctx())).env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBeUndefined();
     const small = { ...modelNamed("eu.anthropic.claude-sonnet-5"), context_window: 128_000 };
     expect((await claude.prepare(ctx({ model: small }))).env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe("128000");
+  });
+
+  it("tells Claude Code the model's real context window; a user-set value wins", async () => {
+    const saved = process.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS;
+    delete process.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS;
+    expect((await claude.prepare(ctx())).env.CLAUDE_CODE_MAX_CONTEXT_TOKENS).toBe("400000");
+    process.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS = "123";
+    expect((await claude.prepare(ctx())).env.CLAUDE_CODE_MAX_CONTEXT_TOKENS).toBeUndefined();
+    if (saved === undefined) delete process.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS;
+    else process.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS = saved;
   });
 
   it("adds no EliteA context without generated tools", async () => {
@@ -185,5 +196,21 @@ describe("codex", () => {
       'model_reasoning_summary="auto"',
     ]);
     expect(args.slice(-2)).toEqual(["-m", "gpt-5.4"]);
+  });
+
+  it("probes in the responses format and says it has no EliteA agents context", () => {
+    expect(codex.probe.path).toBe("/llm/v1/responses");
+    expect(codex.probe.body("m")).toEqual({ model: "m", input: "ping", max_output_tokens: 16 });
+    expect(codex.launchNote).toMatch(/EliteA models only/);
+    expect(codex.versionPattern.exec("codex-cli 0.169.0")?.[1]).toBe("0.169.0");
+  });
+});
+
+describe("claude metadata", () => {
+  it("probes in the messages format with one output token", () => {
+    expect(claude.probe.path).toBe("/llm/v1/messages");
+    expect(claude.probe.body("m")).toEqual({ model: "m", max_tokens: 1, messages: [{ role: "user", content: "ping" }] });
+    expect(claude.versionPattern.exec("2.1.285 (Claude Code)")?.[1]).toBe("2.1.285");
+    expect(claude.launchNote).toBeUndefined();
   });
 });

@@ -16,6 +16,8 @@ export interface LoginOptions {
   project?: string;
   browser?: boolean;
   allowHttp?: boolean;
+  /** False when another command logs in on the way (launch): no "Next: …" hint. */
+  next?: boolean;
 }
 
 async function readStdin(): Promise<string> {
@@ -169,7 +171,7 @@ export async function loginCommand(opts: LoginOptions): Promise<void> {
 
   console.log(`Project: ${projectLabel(project, user)}`);
   console.log(`Token saved to ${where === "keychain" ? "the OS keychain" : join(eliteaCliHome(), "credentials.json")}`);
-  console.log("\nNext: `elitea-cli launch claude`");
+  if (opts.next !== false) console.log("\nNext: `elitea-cli launch claude` or `elitea-cli launch codex`");
 }
 
 export async function logoutCommand(opts: { all?: boolean }): Promise<void> {
